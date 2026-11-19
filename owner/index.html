@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="id" class="notranslate" translate="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="google" content="notranslate" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Captain Coffee — Dashboard Owner & Audit</title>
+</head>
+<body>
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div class="brand"><span>CAPTAIN COFFEE</span><span class="brand-badge">OWNER</span></div>
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 Ringkasan 30 Hari</button>
+        <button class="tab-btn" data-tab="sales" onclick="switchTab('sales')">📜 Penjualan</button>
+        <button class="tab-btn" data-tab="expenses" onclick="switchTab('expenses')">💸 Pengeluaran</button>
+        <button class="tab-btn" data-tab="kasbon" onclick="switchTab('kasbon')">📒 Kasbon</button>
+        <button class="tab-btn" data-tab="settlement" onclick="switchTab('settlement')">🧾 Settlement</button>
+        <button class="tab-btn" data-tab="audit" onclick="switchTab('audit')">🛡️ Audit Log</button>
+        <button class="tab-btn" data-tab="config" onclick="switchTab('config')">⚙️ Cloud</button>
+      </nav>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span id="ownerSyncStatus" class="mono" style="font-size:11px;color:#94a3b8">Memuat...</span>
+      <button class="btn btn-primary" onclick="refreshAll(true)">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- TAB 1: OVERVIEW & 30-DAY ANALYTICS -->
+    <section id="tab-overview">
+      <div class="grid-4">
+        <div class="card accent-blue"><div class="kpi-label">Omzet Shift Aktif</div><div id="ovShiftRev" class="kpi-val mono">Rp 0</div><div id="ovShiftSplit" class="kpi-sub mono">Tunai Rp 0 • Non-Tunai Rp 0</div></div>
+        <div class="card accent-green"><div class="kpi-label">Omzet 30 Hari Terakhir</div><div id="ov30Rev" class="kpi-val mono">Rp 0</div><div id="ov30Count" class="kpi-sub">0 transaksi lunas</div></div>
+        <div class="card accent-amber"><div class="kpi-label">Pengeluaran 30 Hari</div><div id="ov30Exp" class="kpi-val mono">Rp 0</div><div id="ov30Net" class="kpi-sub mono">Net: Rp 0</div></div>
+        <div class="card accent-rose"><div class="kpi-label">Open Tab + Kasbon Aktif</div><div id="ovUnpaid" class="kpi-val mono">Rp 0</div><div id="ovUnpaidSub" class="kpi-sub">Tab Rp 0 • Kasbon Rp 0</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">📈 Tren Penjualan 30 Hari Terakhir</h3>
+          <span id="ovTrendDelta" class="badge b-green mono">-</span>
+        </div>
+        <div id="trendChartHost" class="chart-wrap"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>🏆 Top 8 Menu Terlaris (30 Hari)</h3>
+          <div id="topMenusList"></div>
+        </div>
+        <div class="card">
+          <h3>⚠️ 8 Menu Jarang Keluar (30 Hari)</h3>
+          <div id="slowMenusList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: PENJUALAN -->
+    <section id="tab-sales" class="hidden">
+      <div class="grid-3">
+        <div class="card accent-blue"><div class="kpi-label">Total Pemasukan (Terfilter)</div><div id="sSumAll" class="kpi-val mono">Rp 0</div></div>
+        <div class="card accent-green"><div class="kpi-label">Total Cash (Terfilter)</div><div id="sSumCash" class="kpi-val mono">Rp 0</div></div>
+        <div class="card accent-navy"><div class="kpi-label">Total Non-Tunai (Terfilter)</div><div id="sSumNonCash" class="kpi-val mono">Rp 0</div></div>
+      </div>
+      <div class="toolbar">
+        <button class="chip active" data-sq="today" onclick="setSalesQuick('today')">Hari ini</button>
+        <button class="chip" data-sq="yesterday" onclick="setSalesQuick('yesterday')">Kemarin</button>
+        <button class="chip" data-sq="7days" onclick="setSalesQuick('7days')">7 Hari</button>
+        <button class="chip" data-sq="thisMonth" onclick="setSalesQuick('thisMonth')">Bulan ini</button>
+        <button class="chip" data-sq="all" onclick="setSalesQuick('all')">Semua</button>
+        <button class="btn" onclick="loadArchive(this)">📦 Muat Arsip (&gt;35h)</button>
+        <button class="btn btn-success" onclick="exportSalesCsv()">⬇️ Ekspor CSV</button>
+      </div>
+      <div class="toolbar">
+        <input id="sStart" type="date" class="input" onchange="renderSales()" />
+        <span>s/d</span>
+        <input id="sEnd" type="date" class="input" onchange="renderSales()" />
+        <select id="sStatus" class="select" onchange="renderSales()">
+          <option value="ALL">Semua Status</option>
+          <option value="LUNAS">Lunas</option>
+          <option value="OPEN TAB">Open Tab</option>
+          <option value="KASBON">Kasbon</option>
+          <option value="BATAL">Batal / Void</option>
+        </select>
+        <input id="sQuery" type="search" class="input" placeholder="Cari ID / nama / meja / menu..." oninput="renderSales()" style="min-width:220px" />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>ID</th><th>Meja</th><th>Pelanggan</th><th>Rincian</th><th>Bayar</th><th>Status</th><th class="text-right">Total</th></tr></thead>
+          <tbody id="salesTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: PENGELUARAN -->
+    <section id="tab-expenses" class="hidden">
+      <div class="grid-3">
+        <div class="card accent-amber"><div class="kpi-label">Total Pengeluaran (Terfilter)</div><div id="eSumAll" class="kpi-val mono">Rp 0</div></div>
+        <div class="card accent-rose"><div class="kpi-label">Potong Kas Laci</div><div id="eSumCash" class="kpi-val mono">Rp 0</div></div>
+        <div class="card accent-blue"><div class="kpi-label">Non-Tunai / Rekening</div><div id="eSumNonCash" class="kpi-val mono">Rp 0</div></div>
+      </div>
+      <div class="toolbar">
+        <button class="chip active" data-eq="today" onclick="setExpQuick('today')">Hari ini</button>
+        <button class="chip" data-eq="yesterday" onclick="setExpQuick('yesterday')">Kemarin</button>
+        <button class="chip" data-eq="7days" onclick="setExpQuick('7days')">7 Hari</button>
+        <button class="chip" data-eq="thisMonth" onclick="setExpQuick('thisMonth')">Bulan ini</button>
+        <button class="chip" data-eq="all" onclick="setExpQuick('all')">Semua</button>
+        <button class="btn" onclick="loadArchive(this)">📦 Muat Arsip (&gt;35h)</button>
+        <button class="btn btn-success" onclick="exportExpensesCsv()">⬇️ Ekspor CSV</button>
+      </div>
+      <div class="toolbar">
+        <input id="eStart" type="date" class="input" onchange="renderExpenses()" />
+        <span>s/d</span>
+        <input id="eEnd" type="date" class="input" onchange="renderExpenses()" />
+        <select id="eCat" class="select" onchange="renderExpenses()">
+          <option value="ALL">Semua Kategori</option>
+          <option value="Bahan Baku">Bahan Baku</option>
+          <option value="Operasional">Operasional</option>
+        </select>
+        <input id="eQuery" type="search" class="input" placeholder="Cari keperluan / staf..." oninput="renderExpenses()" />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Kategori</th><th>Keperluan</th><th>Sumber Dana</th><th>Petugas</th><th class="text-right">Nominal</th></tr></thead>
+          <tbody id="expTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 4: KASBON -->
+    <section id="tab-kasbon" class="hidden">
+      <div class="grid-2">
+        <div class="card">
+          <h3>📒 Piutang Aktif (Belum Lunas) — <span id="kbActiveSum" class="mono" style="color:var(--rose)">Rp 0</span></h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tanggal</th><th>Pelanggan</th><th>Rincian</th><th class="text-right">Sisa</th></tr></thead>
+              <tbody id="kbActiveTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h3>✅ Arsip Pelunasan & Cicilan</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tgl Lunas</th><th>Pelanggan</th><th>Metode</th><th class="text-right">Nominal</th></tr></thead>
+              <tbody id="kbArsipTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: SETTLEMENT -->
+    <section id="tab-settlement" class="hidden">
+      <div class="toolbar">
+        <button class="btn btn-success" onclick="exportSettlementCsv()">⬇️ Ekspor CSV Settlement</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Petugas</th><th class="text-right">Omzet</th><th class="text-right">Tunai</th><th class="text-right">Non-Tunai</th><th class="text-right">Keluar Laci</th><th class="text-right">Target</th><th class="text-right">Fisik</th><th class="text-right">Selisih</th><th>Catatan</th></tr></thead>
+          <tbody id="settleTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 6: AUDIT LOG -->
+    <section id="tab-audit" class="hidden">
+      <div class="card" style="margin-bottom:12px">
+        <div class="toolbar" style="margin-bottom:0">
+          <input id="auditPin" type="password" class="input mono" placeholder="Masukkan PIN Supervisor..." />
+          <label style="font-size:12px"><input id="auditIncludeArchive" type="checkbox" /> Sertakan Arsip >60 hari</label>
+          <button class="btn btn-navy" onclick="loadAuditData()">🔓 Muat Audit Log</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Aktor</th><th>Aksi</th><th>ID / Target</th><th>Alasan</th><th class="text-right">Nominal</th><th>Detail</th></tr></thead>
+          <tbody id="auditTbody"><tr><td colspan="7" class="text-center muted">Masukkan PIN Supervisor lalu klik Muat Audit Log.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 7: CONFIG -->
+    <section id="tab-config" class="hidden">
+      <div class="card" style="max-width:640px">
+        <h3>⚙️ Koneksi Google Apps Script</h3>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label class="kpi-label" style="display:block;margin-bottom:4px">URL Web App (/exec)</label>
+            <input id="cfgGasUrl" class="input mono" style="width:100%" />
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="saveOwnerConfig()">💾 Simpan & Muat Ulang</button>
+            <button class="btn" onclick="resetOwnerUrl()">Reset URL Default</button>
+          </div>
+          <div id="cfgDiag" class="mono muted" style="font-size:12px">-</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toastHost"></div>
+  <script src="app.js"></script>
+</body>
+</html>

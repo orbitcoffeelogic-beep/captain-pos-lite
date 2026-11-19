@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="id" class="notranslate" translate="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="google" content="notranslate" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Captain POS Lite — Kasir & KDS</title>
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="brand">
+        <span>CAPTAIN</span>
+        <span class="brand-badge">KASIR LITE</span>
+      </div>
+      <nav class="nav-tabs" aria-label="Mode Layar">
+        <button id="navKasir" class="nav-tab active" onclick="switchView('kasir')">Kasir <span id="navBadgeKasir" class="nav-pill-count hidden">0</span></button>
+        <button id="navRadar" class="nav-tab" onclick="switchView('radar')">Radar Meja <span id="navBadgeRadar" class="nav-pill-count" style="background:#334155">0</span></button>
+        <button id="navKds" class="nav-tab" onclick="switchView('kds')">Barista KDS <span id="navBadgeKds" class="nav-pill-count hidden" style="background:#0891b2">0</span></button>
+      </nav>
+    </div>
+
+    <div class="topbar-right">
+      <button id="btnCrewPill" class="pill-btn" onclick="openCrewModal()">👤 <span id="crewPillName">Kasir</span></button>
+      <button id="btnBtPill" class="pill-btn err" onclick="Printer.handlePillClick()"><span class="dot"></span> <span id="btPillText">Printer</span></button>
+      <button id="btnSyncPill" class="pill-btn ok" onclick="openOutboxModal()"><span class="dot"></span> <span id="syncPillText">Online</span></button>
+      <button class="pill-btn" onclick="manualRefresh()" title="Muat Ulang Data">🔄</button>
+      <button class="pill-btn" onclick="openSettingsModal()" title="Pengaturan">⚙️</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- MEMO / PENGUMUMAN -->
+    <div id="memoBar" class="memo-bar hidden">
+      <span id="memoText"></span>
+      <button class="btn btn-xs" onclick="nextMemo()">Berikutnya</button>
+    </div>
+
+    <!-- RINGKASAN SHIFT -->
+    <section class="kpi-strip">
+      <div class="kpi-card blue">
+        <div class="kpi-label">Omzet Shift</div>
+        <div id="kpiIncome" class="kpi-val mono">Rp 0</div>
+      </div>
+      <div class="kpi-card green">
+        <div class="kpi-label">Tunai Shift</div>
+        <div id="kpiCash" class="kpi-val mono">Rp 0</div>
+      </div>
+      <div class="kpi-card cyan">
+        <div class="kpi-label">QRIS / Transfer</div>
+        <div id="kpiNonCash" class="kpi-val mono">Rp 0</div>
+      </div>
+      <div class="kpi-card navy">
+        <div class="kpi-label">Est. Kas Laci</div>
+        <div id="kpiDrawer" class="kpi-val mono">Rp 0</div>
+      </div>
+      <div class="kpi-card amber">
+        <div class="kpi-label">Open Tab</div>
+        <div id="kpiOpenTab" class="kpi-val mono">Rp 0</div>
+      </div>
+      <div class="kpi-card rose">
+        <div class="kpi-label">Kasbon Aktif</div>
+        <div id="kpiKasbon" class="kpi-val mono">Rp 0</div>
+      </div>
+    </section>
+
+    <!-- TOOLBAR AKSI CEPAT -->
+    <section class="toolbar">
+      <div class="toolbar-group">
+        <button class="btn btn-primary" onclick="openPosModal()">➕ Pesanan Baru</button>
+        <button class="btn" onclick="openKasbonModal()">📒 Kasbon (<span id="btnCountKasbon">0</span>)</button>
+        <button class="btn" onclick="openExpenseModal()">💸 Pengeluaran (<span id="btnValExpense" class="mono">Rp 0</span>)</button>
+        <button class="btn btn-navy" onclick="openSettlementModal()">🧾 Settlement</button>
+        <button class="btn" onclick="openHistoryModal()">📜 Riwayat</button>
+        <button class="btn btn-sm" onclick="Printer.openDrawer()">🔓 Laci</button>
+      </div>
+      <div class="toolbar-group">
+        <input id="searchMainOrder" type="search" class="input" placeholder="Cari meja / nama / ID..." oninput="renderActiveView()" style="width:190px" />
+      </div>
+    </section>
+
+    <!-- VIEW 1: KANBAN KASIR -->
+    <section id="viewKasir" class="kanban-grid">
+      <div class="kanban-col">
+        <div class="kanban-col-head"><span>🌐 Web Masuk</span><span id="cntPending" class="col-count mono">0</span></div>
+        <div id="listPending" class="kanban-list"></div>
+      </div>
+      <div class="kanban-col">
+        <div class="kanban-col-head"><span>⚙️ Diracik</span><span id="cntProcess" class="col-count mono">0</span></div>
+        <div id="listProcess" class="kanban-list"></div>
+      </div>
+      <div class="kanban-col">
+        <div class="kanban-col-head"><span>🔔 Siap Antar</span><span id="cntReady" class="col-count mono">0</span></div>
+        <div id="listReady" class="kanban-list"></div>
+      </div>
+      <div class="kanban-col">
+        <div class="kanban-col-head"><span>🧾 Open Tab</span><span id="cntOpenTab" class="col-count mono">0</span></div>
+        <div id="listOpenTab" class="kanban-list"></div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: RADAR PETA MEJA 2D -->
+    <section id="viewRadar" class="hidden">
+      <div id="radarContainer"></div>
+    </section>
+
+    <!-- VIEW 3: KDS BARISTA -->
+    <section id="viewKds" class="hidden">
+      <div class="chip-bar" style="margin-bottom:10px">
+        <button id="kdsFAll" class="chip active" onclick="setKdsFilter('ALL')">Semua</button>
+        <button id="kdsFProc" class="chip" onclick="setKdsFilter('DIPROSES')">Diproses</button>
+        <button id="kdsFReady" class="chip" onclick="setKdsFilter('SIAP SAJI')">Siap Saji</button>
+      </div>
+      <div id="kdsGrid" class="kds-grid"></div>
+    </section>
+  </main>
+
+  <!-- MODAL 1: POS KASIR -->
+  <div id="modalPos" class="modal-backdrop hidden">
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h3 id="posTitle">Input Pesanan Kasir</h3>
+        <button class="modal-close" onclick="closeModal('modalPos')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="pos-layout">
+          <div class="pos-left">
+            <div style="display:flex;gap:6px">
+              <input id="posSearch" type="search" class="input" style="flex:1" placeholder="Cari menu atau ketik nama item manual..." oninput="onPosSearch(this.value)" />
+              <button class="btn btn-sm" onclick="openCustomItemPrompt()">+ Custom</button>
+            </div>
+            <div id="posCats" class="chip-bar"></div>
+            <div id="posMenuGrid" class="menu-grid"></div>
+          </div>
+
+          <div class="pos-right">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span class="kpi-label">1. Pilih Meja</span>
+                <span style="font-size:10px;color:var(--muted)">● Oranye: Open Tab &nbsp; ● Biru: Terisi</span>
+              </div>
+              <div id="posTableGrid" class="pos-table-grid"></div>
+              <div id="posOccBanner" class="occ-banner hidden" style="margin-top:6px">
+                <span id="posOccText" class="truncate"></span>
+                <div style="display:flex;gap:4px;flex-shrink:0">
+                  <button class="btn btn-xs btn-primary" onclick="clearFromPosBanner()">🧹 Kosongkan</button>
+                  <button class="btn btn-xs" onclick="dismissPosBanner()">👥 Gabung</button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+                <span class="kpi-label">2. Nama Pelanggan</span>
+                <div style="display:flex;gap:4px">
+                  <button class="btn btn-xs" onclick="setPosCustomer('Billyard')">Billyard</button>
+                  <button class="btn btn-xs" onclick="setPosCustomer('Mas Fandi')">Mas Fandi</button>
+                  <button class="btn btn-xs" onclick="setPosCustomer('Mba Sinta')">Mba Sinta</button>
+                </div>
+              </div>
+              <input id="posCustName" type="text" class="input" style="width:100%" placeholder="Ketik nama pelanggan..." oninput="onPosCustInput(this.value)" />
+              <div id="posBillyardRow" class="occ-banner hidden" style="margin-top:5px;background:#ecfdf5;border-color:#a7f3d0">
+                <span id="posBillyardText">Diskon Billyard (-Rp 1.000/menu)</span>
+                <button id="posBillyardBtn" class="btn btn-xs" onclick="toggleBillyard()">Nonaktifkan</button>
+              </div>
+            </div>
+
+            <div>
+              <span class="kpi-label">3. Keranjang (<span id="posCartCount">0</span>)</span>
+              <div id="posCartBox" class="cart-box" style="margin-top:4px"></div>
+            </div>
+
+            <div>
+              <span class="kpi-label">4. Pembayaran</span>
+              <div class="pay-grid" style="margin-top:4px">
+                <button class="pay-btn" data-pay="Tunai" onclick="selectPosPay('Tunai')">Tunai</button>
+                <button class="pay-btn" data-pay="QRIS" onclick="selectPosPay('QRIS')">QRIS</button>
+                <button class="pay-btn" data-pay="Transfer" onclick="selectPosPay('Transfer')">Transfer</button>
+                <button class="pay-btn" data-pay="Open Tab" onclick="selectPosPay('Open Tab')">Open Tab</button>
+                <button class="pay-btn" data-pay="Kasbon" onclick="selectPosPay('Kasbon')">Kasbon</button>
+              </div>
+            </div>
+
+            <div id="posCashBox" class="hidden" style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px">
+              <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
+                <button class="btn btn-xs" onclick="setPosCash('exact')">Uang Pas</button>
+                <button class="btn btn-xs" onclick="setPosCash(20000)">20k</button>
+                <button class="btn btn-xs" onclick="setPosCash(50000)">50k</button>
+                <button class="btn btn-xs" onclick="setPosCash(100000)">100k</button>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                <input id="posCashInput" type="number" inputmode="numeric" class="input mono" style="width:140px" placeholder="Diterima..." oninput="calcPosChange()" />
+                <div class="text-right">
+                  <div class="kpi-label">Kembalian</div>
+                  <div id="posChangeOut" class="fw-800 mono" style="color:var(--green)">Rp 0</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:10px 12px;border-radius:10px">
+              <div>
+                <div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Total Bayar</div>
+                <div id="posTotalOut" class="mono fw-800" style="font-size:18px;color:#38bdf8">Rp 0</div>
+              </div>
+              <button class="btn btn-primary" onclick="submitPosOrder()">💾 Simpan Pesanan</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: SPLIT BILL / BAYAR OPEN TAB -->
+  <div id="modalCheckout" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Bayar Open Tab — <span id="chkTableTitle">Meja</span></h3>
+        <button class="modal-close" onclick="closeModal('modalCheckout')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+        <div id="chkGuestChips" class="chip-bar"></div>
+        <div id="chkTicketList" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto"></div>
+        <div style="background:var(--navy);color:#fff;padding:10px 12px;border-radius:10px;display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Total Terpilih</div>
+            <div id="chkCountText" style="font-size:12px;color:#cbd5e1">0/0 tiket</div>
+          </div>
+          <div id="chkTotalOut" class="mono fw-800" style="font-size:20px;color:#38bdf8">Rp 0</div>
+        </div>
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span class="kpi-label">Uang Tunai</span>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-xs" onclick="setChkCash('exact')">Pas</button>
+              <button class="btn btn-xs" onclick="setChkCash(50000)">50k</button>
+              <button class="btn btn-xs" onclick="setChkCash(100000)">100k</button>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <input id="chkCashInput" type="number" inputmode="numeric" class="input mono" style="width:160px" oninput="calcChkChange()" />
+            <div class="text-right">
+              <div class="kpi-label">Kembalian</div>
+              <div id="chkChangeOut" class="mono fw-800" style="color:var(--green)">Rp 0</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+          <button class="btn btn-success" onclick="finalizeCheckout('Tunai')">Tunai</button>
+          <button class="btn btn-primary" onclick="finalizeCheckout('QRIS')">QRIS</button>
+          <button class="btn btn-navy" onclick="finalizeCheckout('Transfer')">Transfer</button>
+          <button class="btn btn-danger-soft" onclick="finalizeCheckout('Kasbon')">Kasbon</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: DETAIL MEJA (RADAR) -->
+  <div id="modalTableDetail" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="tdTitle">Detail Meja</h3>
+        <button class="modal-close" onclick="closeModal('modalTableDetail')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px">
+          <strong id="tdMeta">-</strong>
+          <strong id="tdTotal" class="mono">Rp 0</strong>
+        </div>
+        <div id="tdBody" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="tdBtnAdd" class="btn">+ Order</button>
+        <button id="tdBtnClear" class="btn btn-primary hidden">🧹 Kosongkan Meja</button>
+        <button id="tdBtnPay" class="btn btn-success hidden">💳 Bayar Open Tab</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 4: BUKU KASBON -->
+  <div id="modalKasbon" class="modal-backdrop hidden">
+    <div class="modal-box xl">
+      <div class="modal-head">
+        <h3>📒 Buku Kasbon & Arsip Piutang</h3>
+        <button class="modal-close" onclick="closeModal('modalKasbon')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="subtabs">
+          <button id="kbTabAktif" class="subtab active" onclick="switchKasbonTab('aktif')">Belum Lunas</button>
+          <button id="kbTabArsip" class="subtab" onclick="switchKasbonTab('arsip')">Riwayat Lunas</button>
+        </div>
+        <div id="kbAktifView"></div>
+        <div id="kbArsipView" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 5: PENGELUARAN KAS -->
+  <div id="modalExpense" class="modal-backdrop hidden">
+    <div class="modal-box xl">
+      <div class="modal-head">
+        <h3>💸 Pengeluaran Kas Operasional</h3>
+        <button class="modal-close" onclick="closeModal('modalExpense')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="subtabs">
+          <button id="expTabAdd" class="subtab active" onclick="switchExpenseTab('add')">+ Catat Baru</button>
+          <button id="expTabList" class="subtab" onclick="switchExpenseTab('list')">Riwayat Pengeluaran</button>
+        </div>
+
+        <div id="expAddView" style="display:flex;flex-direction:column;gap:10px">
+          <div class="form-grid-2">
+            <div class="field">
+              <label>Kategori</label>
+              <select id="expCat" class="select">
+                <option value="Bahan Baku">Bahan Baku</option>
+                <option value="Operasional">Operasional</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Sumber Dana</label>
+              <select id="expSource" class="select">
+                <option value="Kas Tunai (Laci)">Kas Tunai (Laci)</option>
+                <option value="Non-Tunai / Rekening">Non-Tunai / Rekening</option>
+              </select>
+            </div>
+          </div>
+          <div class="chip-bar">
+            <button class="chip" onclick="fillExpReason('Es Batu Kristal','Bahan Baku')">Es Batu</button>
+            <button class="chip" onclick="fillExpReason('Susu UHT / Fresh Milk','Bahan Baku')">Susu</button>
+            <button class="chip" onclick="fillExpReason('Air Galon','Bahan Baku')">Galon</button>
+            <button class="chip" onclick="fillExpReason('Gas LPG 3kg','Operasional')">Gas LPG</button>
+            <button class="chip" onclick="fillExpReason('Token Listrik PLN','Operasional')">Listrik</button>
+          </div>
+          <div class="form-grid-2">
+            <div class="field"><label>Keperluan</label><input id="expDesc" class="input" placeholder="Mis. Beli es batu 2 pak" /></div>
+            <div class="field"><label>Nominal (Rp)</label><input id="expAmount" type="number" inputmode="numeric" class="input mono" placeholder="0" /></div>
+          </div>
+          <button class="btn btn-primary" onclick="submitExpense()">💾 Simpan Pengeluaran</button>
+        </div>
+
+        <div id="expListView" class="hidden">
+          <div class="chip-bar">
+            <button class="chip active" data-expq="today" onclick="setExpQuick('today')">Hari ini</button>
+            <button class="chip" data-expq="yesterday" onclick="setExpQuick('yesterday')">Kemarin</button>
+            <button class="chip" data-expq="7days" onclick="setExpQuick('7days')">7 Hari</button>
+            <button class="chip" data-expq="thisMonth" onclick="setExpQuick('thisMonth')">Bulan ini</button>
+            <button class="chip" data-expq="all" onclick="setExpQuick('all')">Semua</button>
+            <button class="chip" onclick="loadArchiveFromServer(this)">📦 Arsip (&gt;35h)</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center">
+            <input id="expStart" type="date" class="input" onchange="renderExpenseHistory()" />
+            <span>s/d</span>
+            <input id="expEnd" type="date" class="input" onchange="renderExpenseHistory()" />
+            <input id="expQuery" type="search" class="input" placeholder="Cari..." oninput="renderExpenseHistory()" />
+          </div>
+          <div class="summary-3">
+            <div class="kpi-card"><div class="kpi-label">Total Terfilter</div><div id="expSumTotal" class="kpi-val mono">Rp 0</div></div>
+            <div class="kpi-card amber"><div class="kpi-label">Potong Kas Laci</div><div id="expSumCash" class="kpi-val mono">Rp 0</div></div>
+            <div class="kpi-card blue"><div class="kpi-label">Non-Tunai</div><div id="expSumNonCash" class="kpi-val mono">Rp 0</div></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Waktu</th><th>Kategori</th><th>Keperluan</th><th>Sumber</th><th class="text-right">Nominal</th><th>Aksi</th></tr></thead>
+              <tbody id="expTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 6: SETTLEMENT SHIFT -->
+  <div id="modalSettlement" class="modal-backdrop hidden">
+    <div class="modal-box xl">
+      <div class="modal-head">
+        <h3>🧾 Settlement Tutup Shift</h3>
+        <button class="modal-close" onclick="closeModal('modalSettlement')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="subtabs">
+          <button id="stTabForm" class="subtab active" onclick="switchSettleTab('form')">Tutup Shift</button>
+          <button id="stTabHist" class="subtab" onclick="switchSettleTab('hist')">Riwayat Settlement</button>
+        </div>
+
+        <div id="stFormView" style="display:flex;flex-direction:column;gap:10px">
+          <div class="summary-3">
+            <div class="kpi-card blue"><div class="kpi-label">Total Omzet Shift</div><div id="stOmzet" class="kpi-val mono">Rp 0</div></div>
+            <div class="kpi-card green"><div class="kpi-label">Tunai / Non-Tunai</div><div id="stSplit" class="kpi-val mono" style="font-size:13px">Rp 0 / Rp 0</div></div>
+            <div class="kpi-card navy"><div class="kpi-label">Target Kas Laci</div><div id="stTarget" class="kpi-val mono">Rp 0</div></div>
+          </div>
+          <div class="form-grid-2">
+            <div class="field"><label>Kas Fisik Aktual di Laci (Rp)</label><input id="stActual" type="number" inputmode="numeric" class="input mono" oninput="calcSettleDiff()" placeholder="Masukkan hitung fisik..." /></div>
+            <div class="field"><label>Selisih</label><div id="stDiff" class="input mono fw-800" style="background:var(--surface-2)">Rp 0</div></div>
+          </div>
+          <div class="field"><label>Catatan Shift (Opsional)</label><input id="stNote" class="input" placeholder="Mis. Kas pas / serah terima shift sore" /></div>
+          <button class="btn btn-success" onclick="confirmSettlement()">✅ Konfirmasi Settlement & Reset Shift</button>
+        </div>
+
+        <div id="stHistView" class="hidden">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Waktu</th><th>Petugas</th><th class="text-right">Omzet</th><th class="text-right">Target</th><th class="text-right">Fisik</th><th class="text-right">Selisih</th><th>Aksi</th></tr></thead>
+              <tbody id="stHistTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 7: RIWAYAT TRANSAKSI -->
+  <div id="modalHistory" class="modal-backdrop hidden">
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h3>📜 Riwayat Transaksi Penjualan</h3>
+        <button class="modal-close" onclick="closeModal('modalHistory')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="summary-3">
+          <div class="kpi-card blue"><div class="kpi-label">Total Pemasukan (Terfilter)</div><div id="histSumAll" class="kpi-val mono">Rp 0</div></div>
+          <div class="kpi-card green"><div class="kpi-label">Total Cash (Terfilter)</div><div id="histSumCash" class="kpi-val mono">Rp 0</div></div>
+          <div class="kpi-card cyan"><div class="kpi-label">Total Non-Tunai (Terfilter)</div><div id="histSumNonCash" class="kpi-val mono">Rp 0</div></div>
+        </div>
+        <div class="chip-bar">
+          <button class="chip active" data-hq="today" onclick="setHistQuick('today')">Hari ini</button>
+          <button class="chip" data-hq="yesterday" onclick="setHistQuick('yesterday')">Kemarin</button>
+          <button class="chip" data-hq="7days" onclick="setHistQuick('7days')">7 Hari</button>
+          <button class="chip" data-hq="thisMonth" onclick="setHistQuick('thisMonth')">Bulan ini</button>
+          <button class="chip" data-hq="all" onclick="setHistQuick('all')">Semua</button>
+          <button class="chip" onclick="loadArchiveFromServer(this)">📦 Arsip (&gt;35h)</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center">
+          <input id="histStart" type="date" class="input" onchange="renderHistory()" />
+          <span>s/d</span>
+          <input id="histEnd" type="date" class="input" onchange="renderHistory()" />
+          <select id="histStatus" class="select" onchange="renderHistory()">
+            <option value="ALL">Semua Status</option>
+            <option value="SELESAI">Selesai / Lunas</option>
+            <option value="OPEN TAB">Open Tab</option>
+            <option value="KASBON">Kasbon</option>
+            <option value="BATAL">Batal / Void</option>
+          </select>
+          <input id="histQuery" type="search" class="input" placeholder="Cari ID / nama / meja..." oninput="renderHistory()" />
+        </div>
+        <div class="table-wrap" style="max-height:48vh;overflow-y:auto">
+          <table>
+            <thead><tr><th>Waktu / ID</th><th>Meja & Tamu</th><th>Menu</th><th>Bayar</th><th>Status</th><th class="text-right">Total</th><th>Aksi</th></tr></thead>
+            <tbody id="histTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 8: OUTBOX SINKRONISASI -->
+  <div id="modalOutbox" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>⚡ Antrean Sinkronisasi Lokal</h3>
+        <button class="modal-close" onclick="closeModal('modalOutbox')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px">
+          <strong id="obCount">0 Transaksi</strong>
+          <span id="obDiag" class="mono muted">v1.0-lite</span>
+        </div>
+        <div id="obList" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="btnForceSync" class="btn btn-primary" onclick="forceSyncNow()">🚀 Sinkronkan Sekarang</button>
+        <button class="btn btn-danger-soft" onclick="SyncQueue.clearFailed()">🗑️ Hapus Gagal</button>
+        <button class="btn" onclick="closeModal('modalOutbox')">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 9: GANTI KRU -->
+  <div id="modalCrew" class="modal-backdrop hidden">
+    <div class="modal-box" style="max-width:420px">
+      <div class="modal-head">
+        <h3>👤 Ganti Kru Aktif</h3>
+        <button class="modal-close" onclick="closeModal('modalCrew')">✕</button>
+      </div>
+      <div class="modal-body" id="crewListBody" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+  <!-- MODAL 10: PENGATURAN CLOUD & PRINTER -->
+  <div id="modalSettings" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>⚙️ Pengaturan Kasir Lite</h3>
+        <button class="modal-close" onclick="closeModal('modalSettings')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+        <div class="field">
+          <label>URL Google Apps Script (/exec)</label>
+          <input id="setGasUrl" class="input mono" />
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>Interval Polling Aktif (detik)</label><input id="setPollSec" type="number" min="3" max="60" class="input mono" /></div>
+          <div class="field">
+            <label>Lebar Kertas Printer</label>
+            <select id="setPaperWidth" class="select">
+              <option value="58">58 mm (Standar)</option>
+              <option value="80">80 mm</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>Nama Kedai di Struk</label><input id="setStoreName" class="input" /></div>
+          <div class="field"><label>Alamat / Kontak Struk</label><input id="setStoreAddr" class="input" /></div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:12px">
+          <label><input id="setAutoPrintCashier" type="checkbox" /> Auto-print Struk Kasir</label>
+          <label><input id="setAutoPrintBarista" type="checkbox" /> Auto-print Checker Barista</label>
+          <label><input id="setAutoDrawer" type="checkbox" /> Auto-buka Laci Tunai</label>
+          <label><input id="setShowLogo" type="checkbox" /> Cetak Logo Struk</label>
+        </div>
+        <div class="field">
+          <label>Logo Struk Thermal (PNG/JPG maks 1MB)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="setLogoFile" type="file" accept="image/*" onchange="Printer.uploadLogo(event)" />
+            <button class="btn btn-xs btn-danger-soft" onclick="Printer.removeLogo()">Hapus Logo</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="Printer.connect()">🔗 Hubungkan Printer BT</button>
+          <button class="btn" onclick="Printer.disconnect()">Putus BT</button>
+          <button class="btn" onclick="Printer.testReceipt()">🖨️ Tes Struk</button>
+          <button class="btn" onclick="Printer.openDrawer()">🔓 Tes Laci</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" onclick="saveSettingsModal()">💾 Simpan Pengaturan</button>
+        <button class="btn" onclick="closeModal('modalSettings')">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastHost"></div>
+  <div id="thermalPrintContainer"></div>
+  <script src="app.js"></script>
+</body>
+</html>
