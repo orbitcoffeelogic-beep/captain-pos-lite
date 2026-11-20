@@ -30,6 +30,7 @@
 
     <div class="topbar-right">
       <button id="btnCrewPill" class="pill-btn" onclick="openCrewModal()">👤 <span id="crewPillName">Kasir</span></button>
+      <button id="btnUiScale" class="pill-btn" onclick="toggleUiScale()" title="Ubah Ukuran Tampilan (Sedang / Besar)">Aa <span id="uiScalePillText">Sedang</span></button>
       <button id="btnBtPill" class="pill-btn err" onclick="Printer.handlePillClick()"><span class="dot"></span> <span id="btPillText">Printer</span></button>
       <button id="btnSyncPill" class="pill-btn ok" onclick="openOutboxModal()"><span class="dot"></span> <span id="syncPillText">Online</span></button>
       <button class="pill-btn" onclick="manualRefresh()" title="Muat Ulang Data">🔄</button>
@@ -83,7 +84,7 @@
         <button class="btn btn-sm" onclick="Printer.openDrawer()">🔓 Laci</button>
       </div>
       <div class="toolbar-group">
-        <input id="searchMainOrder" type="search" class="input" placeholder="Cari meja / nama / ID..." oninput="renderActiveView()" style="width:190px" />
+        <input id="searchMainOrder" type="search" class="input" placeholder="Cari meja / nama / ID..." oninput="renderActiveView()" style="width:min(100%,220px)" />
       </div>
     </section>
 
@@ -145,7 +146,7 @@
             <div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                 <span class="kpi-label">1. Pilih Meja</span>
-                <span style="font-size:10px;color:var(--muted)">● Oranye: Open Tab &nbsp; ● Biru: Terisi</span>
+                <span style="font-size:0.72rem;color:var(--muted)">● Oranye: Open Tab &nbsp; ● Biru: Terisi</span>
               </div>
               <div id="posTableGrid" class="pos-table-grid"></div>
               <div id="posOccBanner" class="occ-banner hidden" style="margin-top:6px">
@@ -207,8 +208,8 @@
 
             <div style="display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:#fff;padding:10px 12px;border-radius:10px">
               <div>
-                <div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Total Bayar</div>
-                <div id="posTotalOut" class="mono fw-800" style="font-size:18px;color:#38bdf8">Rp 0</div>
+                <div style="font-size:0.72rem;color:#94a3b8;text-transform:uppercase">Total Bayar</div>
+                <div id="posTotalOut" class="mono fw-800" style="font-size:1.29rem;color:#38bdf8">Rp 0</div>
               </div>
               <button class="btn btn-primary" onclick="submitPosOrder()">💾 Simpan Pesanan</button>
             </div>
@@ -230,10 +231,10 @@
         <div id="chkTicketList" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto"></div>
         <div style="background:var(--navy);color:#fff;padding:10px 12px;border-radius:10px;display:flex;justify-content:space-between;align-items:center">
           <div>
-            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase">Total Terpilih</div>
-            <div id="chkCountText" style="font-size:12px;color:#cbd5e1">0/0 tiket</div>
+            <div style="font-size:0.72rem;color:#94a3b8;text-transform:uppercase">Total Terpilih</div>
+            <div id="chkCountText" style="font-size:0.86rem;color:#cbd5e1">0/0 tiket</div>
           </div>
-          <div id="chkTotalOut" class="mono fw-800" style="font-size:20px;color:#38bdf8">Rp 0</div>
+          <div id="chkTotalOut" class="mono fw-800" style="font-size:1.43rem;color:#38bdf8">Rp 0</div>
         </div>
         <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -270,7 +271,7 @@
         <button class="modal-close" onclick="closeModal('modalTableDetail')">✕</button>
       </div>
       <div class="modal-body">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:0.86rem">
           <strong id="tdMeta">-</strong>
           <strong id="tdTotal" class="mono">Rp 0</strong>
         </div>
@@ -393,7 +394,7 @@
         <div id="stFormView" style="display:flex;flex-direction:column;gap:10px">
           <div class="summary-3">
             <div class="kpi-card blue"><div class="kpi-label">Total Omzet Shift</div><div id="stOmzet" class="kpi-val mono">Rp 0</div></div>
-            <div class="kpi-card green"><div class="kpi-label">Tunai / Non-Tunai</div><div id="stSplit" class="kpi-val mono" style="font-size:13px">Rp 0 / Rp 0</div></div>
+            <div class="kpi-card green"><div class="kpi-label">Tunai / Non-Tunai</div><div id="stSplit" class="kpi-val mono" style="font-size:0.93rem">Rp 0 / Rp 0</div></div>
             <div class="kpi-card navy"><div class="kpi-label">Target Kas Laci</div><div id="stTarget" class="kpi-val mono">Rp 0</div></div>
           </div>
           <div class="form-grid-2">
@@ -468,7 +469,7 @@
         <button class="modal-close" onclick="closeModal('modalOutbox')">✕</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.86rem">
           <strong id="obCount">0 Transaksi</strong>
           <span id="obDiag" class="mono muted">v1.0-lite</span>
         </div>
@@ -515,6 +516,13 @@
             </select>
           </div>
         </div>
+        <div class="field">
+          <label>Ukuran Tampilan &amp; Font</label>
+          <select id="setUiScale" class="select" onchange="applyUiScale(this.value, true)">
+            <option value="medium">Sedang (Standar)</option>
+            <option value="large">Besar (Ramah Mata Minus)</option>
+          </select>
+        </div>
         <div class="form-grid-2">
           <div class="field"><label>Nama Kedai di Struk</label><input id="setStoreName" class="input" /></div>
           <div class="field"><label>Alamat / Kontak Struk</label><input id="setStoreAddr" class="input" /></div>
@@ -523,7 +531,7 @@
           <label>Footer Struk (tekan Enter untuk baris baru)</label>
           <textarea id="setStoreFooter" class="input" rows="3" style="resize:vertical;min-height:68px;line-height:1.4" placeholder="Contoh:&#10;Terima kasih sudah mampir!&#10;IG: @captaincoffee"></textarea>
         </div>
-        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:12px">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:0.86rem">
           <label><input id="setAutoPrintCashier" type="checkbox" /> Auto-print Struk Kasir</label>
           <label><input id="setAutoPrintBarista" type="checkbox" /> Auto-print Checker Barista</label>
           <label><input id="setAutoDrawer" type="checkbox" /> Auto-buka Laci Tunai</label>
