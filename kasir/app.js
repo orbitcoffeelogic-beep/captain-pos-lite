@@ -7,6 +7,8 @@ const STORAGE_KEY = 'CAPTAIN_COFFEE_OPS_STATE_V1';
 
 let SCRIPT_URL = localStorage.getItem('CAPTAIN_GAS_URL') || DEFAULT_SCRIPT_URL;
 let POLL_INTERVAL_SEC = Number(localStorage.getItem('CAPTAIN_POLL_SEC')) || 5;
+let UI_SCALE = localStorage.getItem('CAPTAIN_UI_SCALE') === 'large' ? 'large' : 'medium';
+document.documentElement.classList.toggle('ui-large', UI_SCALE === 'large');
 let lastServerApiVersion = '-';
 let lastDataVersion = 0;
 let currentView = 'kasir';
@@ -908,12 +910,12 @@ function renderKanban() {
     const auth = o.selectedAuth || 'QRIS';
     return `<div class="order-card ${mins >= 10 ? 'late' : ''}">
       <div class="order-head">
-        <div><span class="badge b-blue">${escapeHtml(o.location)}</span> <span class="mono muted" style="font-size:11px">#${escapeHtml(o.orderId.slice(-8))}</span><div class="fw-800" style="margin-top:3px">${escapeHtml(o.customerName)}</div></div>
+        <div><span class="badge b-blue">${escapeHtml(o.location)}</span> <span class="mono muted" style="font-size:0.79rem">#${escapeHtml(o.orderId.slice(-8))}</span><div class="fw-800" style="margin-top:3px">${escapeHtml(o.customerName)}</div></div>
         <span class="badge ${mins >= 10 ? 'b-rose' : 'b-slate'} mono" data-elapsed-ms="${o.createdAtMs}">${mins}m</span>
       </div>
       <ul class="item-list">${(o.items || []).map(it => `<li class="item-row"><span><strong>${it.qty}x</strong> ${escapeHtml(it.name)}</span><span class="mono">${formatRupiah((it.price || 0) * it.qty)}</span></li>${it.note ? `<div class="item-note">* ${escapeHtml(it.note)}</div>` : ''}`).join('')}</ul>
       <div class="card-foot">
-        <select class="select" style="min-height:30px;padding:3px 6px;font-size:11px" onchange="setWebAuth('${escapeAttr(o.orderId)}',this.value)">
+        <select class="select" style="min-height:30px;padding:3px 6px;font-size:0.79rem" onchange="setWebAuth('${escapeAttr(o.orderId)}',this.value)">
           ${['Tunai', 'QRIS', 'Transfer', 'Open Tab', 'Kasbon'].map(m => `<option value="${m}" ${auth === m ? 'selected' : ''}>${m}</option>`).join('')}
         </select>
         <strong class="mono">${formatRupiah(o.totalPrice)}</strong>
@@ -923,7 +925,7 @@ function renderKanban() {
         <button class="btn btn-sm btn-danger-soft" onclick="rejectWebOrder('${escapeAttr(o.orderId)}')">✕ Tolak</button>
       </div>
     </div>`;
-  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:12px">Tidak ada antrean web</div>`;
+  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:0.86rem">Tidak ada antrean web</div>`;
 
   document.getElementById('listProcess').innerHTML = proc.length ? proc.map(o => {
     const mins = elapsedMins(o.createdAtMs);
@@ -933,13 +935,13 @@ function renderKanban() {
         <span class="badge ${mins >= 10 ? 'b-rose' : 'b-slate'} mono" data-elapsed-ms="${o.createdAtMs}">${mins}m</span>
       </div>
       <ul class="item-list">${(o.items || []).map(it => `<li class="item-row"><span>${it.done ? '✓ ' : ''}<strong>${it.qty}x</strong> ${escapeHtml(it.name)}</span></li>`).join('')}</ul>
-      <div class="card-foot"><span class="mono muted" style="font-size:11px">${escapeHtml(o.paymentMethod)}</span><strong class="mono">${formatRupiah(o.totalPrice)}</strong></div>
+      <div class="card-foot"><span class="mono muted" style="font-size:0.79rem">${escapeHtml(o.paymentMethod)}</span><strong class="mono">${formatRupiah(o.totalPrice)}</strong></div>
       <div class="card-actions">
         <button class="btn btn-sm btn-primary" onclick="setOrderStatus('${escapeAttr(o.orderId)}','SIAP SAJI')">🔔 Siap Saji</button>
         <button class="btn btn-sm" onclick="Printer.printReceipt(findOrder('${escapeAttr(o.orderId)}'))">🖨️</button>
       </div>
     </div>`;
-  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:12px">Kosong</div>`;
+  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:0.86rem">Kosong</div>`;
 
   document.getElementById('listReady').innerHTML = ready.length ? ready.map(o => {
     const mins = elapsedMins(o.createdAtMs);
@@ -953,7 +955,7 @@ function renderKanban() {
         <button class="btn btn-sm btn-success" onclick="setOrderStatus('${escapeAttr(o.orderId)}','SELESAI')">🏃 Sudah Diantar</button>
       </div>
     </div>`;
-  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:12px">Kosong</div>`;
+  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:0.86rem">Kosong</div>`;
 
   // Group Open Tab by table location
   const tabGroups = new Map();
@@ -975,7 +977,7 @@ function renderKanban() {
         <button class="btn btn-sm" onclick="openPosModal('${escapeAttr(loc)}','${escapeAttr(list[0].customerName || '')}')">+ Ronde</button>
       </div>
     </div>`;
-  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:12px">Tidak ada Open Tab</div>`;
+  }).join('') : `<div class="muted text-center" style="padding:18px;font-size:0.86rem">Tidak ada Open Tab</div>`;
 }
 
 const RADAR_SVG_PATHS = {
@@ -1011,7 +1013,7 @@ function renderRadarTableIcon(t) {
     fg = '#2563eb'; bg = '#dbeafe';
   }
 
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:${bg};color:${fg};flex-shrink:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RADAR_SVG_PATHS[kind]}</svg></span>`;
+  return `<span class="radar-ic-badge" style="background:${bg};color:${fg}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RADAR_SVG_PATHS[kind]}</svg></span>`;
 }
 
 function renderRadar() {
@@ -1036,8 +1038,8 @@ function renderRadar() {
           if (!active.length) {
             return `<div class="table-node free" onclick="openPosModal('${safe}','')">
               <div class="table-node-head"><strong class="mono">${escapeHtml(loc)}</strong>${renderRadarTableIcon(t)}</div>
-              <div class="text-center muted" style="font-size:11px;margin:8px 0">Tersedia • +Order</div>
-              <div class="text-right muted mono" style="font-size:10px">0 tiket</div>
+              <div class="text-center muted" style="font-size:0.79rem;margin:8px 0">Tersedia • +Order</div>
+              <div class="text-right muted mono" style="font-size:0.72rem">0 tiket</div>
             </div>`;
           }
           const openTabs = active.filter(o => o.paymentStatus === 'OPEN TAB');
@@ -1064,11 +1066,11 @@ function renderRadar() {
 
           return `<div class="table-node ${cls}">
             <div onclick="openTableDetail('${safe}')" style="cursor:pointer">
-              <div class="table-node-head"><strong class="mono" style="font-size:12px">${escapeHtml(loc)}</strong>${bdg}</div>
-              <div class="fw-700 truncate" style="font-size:12px;margin-top:4px">${escapeHtml(names)}</div>
+              <div class="table-node-head"><strong class="mono" style="font-size:0.86rem">${escapeHtml(loc)}</strong>${bdg}</div>
+              <div class="fw-700 truncate" style="font-size:0.86rem;margin-top:4px">${escapeHtml(names)}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
-                <strong class="mono" style="font-size:12px">${formatRupiah(bill)}</strong>
-                <span class="mono muted" style="font-size:10px" data-elapsed-ms="${oldest}">${formatDwell(mins)}</span>
+                <strong class="mono" style="font-size:0.86rem">${formatRupiah(bill)}</strong>
+                <span class="mono muted" style="font-size:0.72rem" data-elapsed-ms="${oldest}">${formatDwell(mins)}</span>
               </div>
             </div>
             <div class="table-node-actions">
@@ -1107,7 +1109,7 @@ function renderKds() {
       <div class="order-head">
         <div>
           <span class="badge ${o.status === 'SIAP SAJI' ? 'b-green' : 'b-blue'}">${escapeHtml(o.location)}</span>
-          <span class="mono muted" style="font-size:11px">#${escapeHtml(o.orderId.slice(-8))}</span>
+          <span class="mono muted" style="font-size:0.79rem">#${escapeHtml(o.orderId.slice(-8))}</span>
           <div class="fw-800" style="margin-top:3px">${escapeHtml(o.customerName)}</div>
         </div>
         <span class="badge ${late ? 'b-rose' : 'b-slate'} mono" data-elapsed-ms="${o.createdAtMs}">${mins}m</span>
@@ -1302,7 +1304,7 @@ function renderPosCart() {
       </div>
       ${c.note ? `<div class="item-note">* ${escapeHtml(c.note)}</div>` : ''}
     </div>
-  `).join('') : `<div class="muted text-center" style="padding:10px;font-size:12px">Tap menu di kiri untuk menambah</div>`;
+  `).join('') : `<div class="muted text-center" style="padding:10px;font-size:0.86rem">Tap menu di kiri untuk menambah</div>`;
   calcPosChange();
 }
 function selectPosPay(m) { pos.pay = m; renderPosPayBtns(); }
@@ -1397,8 +1399,8 @@ function renderCheckoutList(resetCash = false) {
     <label class="kds-check" style="margin:0;text-decoration:none;background:${chkSelected.has(o.orderId) ? '#fff' : '#f1f5f9'}">
       <input type="checkbox" ${chkSelected.has(o.orderId) ? 'checked' : ''} onchange="toggleChk('${escapeAttr(o.orderId)}')" />
       <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;font-size:12px"><strong>👤 ${escapeHtml(o.customerName)} • R${i + 1}</strong><strong class="mono">${formatRupiah(o.totalPrice)}</strong></div>
-        <div class="muted" style="font-size:11px">${(o.items || []).map(it => `${it.qty}x ${escapeHtml(it.name)}`).join(', ')}</div>
+        <div style="display:flex;justify-content:space-between;font-size:0.86rem"><strong>👤 ${escapeHtml(o.customerName)} • R${i + 1}</strong><strong class="mono">${formatRupiah(o.totalPrice)}</strong></div>
+        <div class="muted" style="font-size:0.79rem">${(o.items || []).map(it => `${it.qty}x ${escapeHtml(it.name)}`).join(', ')}</div>
       </div>
     </label>
   `).join('');
@@ -1516,7 +1518,7 @@ function renderKasbonModal() {
         <div><strong>👤 ${escapeHtml(name)}</strong> <span class="badge b-rose">${notes.length} nota</span></div>
         <strong class="mono" style="color:var(--rose)">${formatRupiah(tot)}</strong>
       </div>
-      <div class="muted" style="font-size:11px;margin-bottom:6px">${notes.map(n => `• ${escapeHtml(n.tanggal)} — ${escapeHtml(n.rincian_pesanan)} (${formatRupiah(n.total_tagihan)})`).join('<br/>')}</div>
+      <div class="muted" style="font-size:0.79rem;margin-bottom:6px">${notes.map(n => `• ${escapeHtml(n.tanggal)} — ${escapeHtml(n.rincian_pesanan)} (${formatRupiah(n.total_tagihan)})`).join('<br/>')}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-sm btn-success" onclick="settleCustomerKasbon('${escapeAttr(name)}',false)">✓ Lunasi Penuh</button>
         <button class="btn btn-sm btn-primary" onclick="settleCustomerKasbon('${escapeAttr(name)}',true)">💵 Bayar Cicilan</button>
@@ -1803,8 +1805,8 @@ async function openOutboxModal() {
   document.getElementById('obList').innerHTML = list.length ? list.map(it => `
     <div class="order-card" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div style="min-width:0;flex:1">
-        <div class="mono fw-700" style="font-size:12px">#${escapeHtml(it.orderId || '-')} <span class="badge b-slate">${escapeHtml(it.action)}</span></div>
-        <div class="mono" style="font-size:11px;color:${it.lastError ? 'var(--rose)' : 'var(--muted)'}">Percobaan ${it.attempts || 0} • ${escapeHtml(it.lastError || 'Menunggu kirim')}</div>
+        <div class="mono fw-700" style="font-size:0.86rem">#${escapeHtml(it.orderId || '-')} <span class="badge b-slate">${escapeHtml(it.action)}</span></div>
+        <div class="mono" style="font-size:0.79rem;color:${it.lastError ? 'var(--rose)' : 'var(--muted)'}">Percobaan ${it.attempts || 0} • ${escapeHtml(it.lastError || 'Menunggu kirim')}</div>
       </div>
       <div style="display:flex;align-items:center;gap:5px">
         <span class="badge ${it.status === 'failed' ? 'b-rose' : 'b-amber'}">${it.permanent ? 'DITOLAK' : it.status.toUpperCase()}</span>
@@ -1856,14 +1858,37 @@ function selectCrew(id) {
   showToast(`Kru aktif: ${target.nama}`, 'ok');
 }
 
+// UI SCALE (Sedang / Besar — Ramah Mata Minus)
+function applyUiScale(scale, persist = true) {
+  UI_SCALE = scale === 'large' ? 'large' : 'medium';
+  const isLarge = UI_SCALE === 'large';
+  document.documentElement.classList.toggle('ui-large', isLarge);
+  if (persist) {
+    try { localStorage.setItem('CAPTAIN_UI_SCALE', UI_SCALE); } catch (_) {}
+  }
+  const pill = document.getElementById('btnUiScale');
+  const txt = document.getElementById('uiScalePillText');
+  if (txt) txt.textContent = isLarge ? 'Besar' : 'Sedang';
+  if (pill) pill.classList.toggle('info', isLarge);
+  const sel = document.getElementById('setUiScale');
+  if (sel) sel.value = UI_SCALE;
+}
+function toggleUiScale() {
+  applyUiScale(UI_SCALE === 'large' ? 'medium' : 'large', true);
+  showToast(`Tampilan: ${UI_SCALE === 'large' ? 'Besar (Ramah Mata Minus)' : 'Sedang (Standar)'}`, 'ok');
+}
+
 // SETTINGS
 function openSettingsModal() {
   const pc = Printer.getCfg();
   document.getElementById('setGasUrl').value = SCRIPT_URL;
   document.getElementById('setPollSec').value = POLL_INTERVAL_SEC;
   document.getElementById('setPaperWidth').value = pc.paperWidth;
+  const selScale = document.getElementById('setUiScale');
+  if (selScale) selScale.value = UI_SCALE;
   document.getElementById('setStoreName').value = pc.storeName;
   document.getElementById('setStoreAddr').value = pc.storeAddr;
+  document.getElementById('setStoreFooter').value = pc.storeFooter || '';
   document.getElementById('setAutoPrintCashier').checked = pc.autoCashier;
   document.getElementById('setAutoPrintBarista').checked = pc.autoBarista;
   document.getElementById('setAutoDrawer').checked = pc.autoDrawer;
@@ -1875,10 +1900,13 @@ function saveSettingsModal() {
   POLL_INTERVAL_SEC = Math.max(3, Math.min(60, Number(document.getElementById('setPollSec').value) || 5));
   localStorage.setItem('CAPTAIN_GAS_URL', SCRIPT_URL);
   localStorage.setItem('CAPTAIN_POLL_SEC', String(POLL_INTERVAL_SEC));
+  const selScale = document.getElementById('setUiScale');
+  if (selScale) applyUiScale(selScale.value, true);
   Printer.saveCfg({
     paperWidth: document.getElementById('setPaperWidth').value,
     storeName: document.getElementById('setStoreName').value.trim() || 'CAPTAIN COFFEE',
     storeAddr: document.getElementById('setStoreAddr').value.trim(),
+    storeFooter: document.getElementById('setStoreFooter').value.replace(/\r\n/g, '\n').trim(),
     autoCashier: document.getElementById('setAutoPrintCashier').checked,
     autoBarista: document.getElementById('setAutoPrintBarista').checked,
     autoDrawer: document.getElementById('setAutoDrawer').checked,
@@ -1897,7 +1925,7 @@ const Printer = {
   device: null, char: null, safeChunk: null, chain: Promise.resolve(),
   getCfg() {
     return Object.assign({
-      paperWidth: '58', storeName: 'CAPTAIN COFFEE', storeAddr: '',
+      paperWidth: '58', storeName: 'CAPTAIN COFFEE', storeAddr: '', storeFooter: '',
       autoCashier: false, autoBarista: false, autoDrawer: false, showLogo: true
     }, safeJson(localStorage.getItem('CAPTAIN_LITE_PRINTER_CFG'), {}), {
       logoBase64: localStorage.getItem('CAPTAIN_PRINTER_LOGO') || ''
@@ -2031,13 +2059,15 @@ const Printer = {
     const is80 = c.paperWidth === '80';
     const w = is80 ? 48 : 36, pad = '     ';
     const div = pad + '-'.repeat(w) + '\n';
+    const footerText = (c.storeFooter && c.storeFooter.trim()) ? c.storeFooter.trim() : 'Terima kasih!';
+    const footerLines = footerText.split(/\r?\n/).map(line => `${pad}${line}\n`).join('');
     const lines = [
       '\n', pad + c.storeName + '\n', c.storeAddr ? pad + c.storeAddr + '\n' : '', div,
       `${pad}No   : #${String(o.orderId || '').slice(-10)}\n`,
       `${pad}Wkt  : ${o.timestamp || nowTimestampStr()}\n`,
       `${pad}Meja : ${o.location} • ${o.customerName}\n`, div,
       ...(o.items || []).map(it => `${pad}${it.qty}x ${it.name}\n${pad}   ${formatRupiah((it.price || 0) * it.qty)}\n`),
-      div, `${pad}TOTAL: ${formatRupiah(o.totalPrice)}\n`, `${pad}Bayar: ${o.paymentMethod} (${o.paymentStatus})\n`, div, `${pad}Terima kasih!\n\n\n\n`
+      div, `${pad}TOTAL: ${formatRupiah(o.totalPrice)}\n`, `${pad}Bayar: ${o.paymentMethod} (${o.paymentStatus})\n`, div, footerLines, '\n\n\n'
     ].join('');
     if (this.char) {
       try {
@@ -2146,6 +2176,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   else if (mode === 'radar') switchView('radar');
   else renderAllActive();
 
+  applyUiScale(UI_SCALE, false);
   updateCrewUI();
   renderMemoBar();
   Printer.updatePill();
