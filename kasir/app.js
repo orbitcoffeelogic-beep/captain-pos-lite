@@ -978,6 +978,42 @@ function renderKanban() {
   }).join('') : `<div class="muted text-center" style="padding:18px;font-size:12px">Tidak ada Open Tab</div>`;
 }
 
+const RADAR_SVG_PATHS = {
+  sofa: '<path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3"/><path d="M2 11v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v2H6v-2a2 2 0 0 0-4 0Z"/><path d="M4 18v2"/><path d="M20 18v2"/>',
+  meja: '<path d="M4 8h16"/><path d="M12 8v11"/><path d="M8 19h8"/><path d="M5 12v7"/><path d="M19 12v7"/>',
+  lesehan: '<path d="M3 15h18"/><path d="M5 15v4"/><path d="M19 15v4"/><rect x="6" y="11" width="12" height="4" rx="1"/>',
+  door: '<path d="M3 20h18"/><path d="M5 20V5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v15"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h8"/>',
+  bag: '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+  bar: '<path d="M8 22h8"/><path d="M12 11v11"/><path d="m19 3-7 8-7-8Z"/>'
+};
+
+/** Render ikon garis SVG berwarna sesuai tipe dan nama meja pada Radar Meja. */
+function renderRadarTableIcon(t) {
+  const name = String(t?.name || '').toLowerCase();
+  let kind = 'meja', fg = '#334155', bg = '#f1f5f9';
+
+  if (t?.type === 'TAKEAWAY') {
+    kind = 'bag'; fg = '#7c3aed'; bg = '#ede9fe';
+  } else if (t?.type === 'BAR') {
+    kind = 'bar'; fg = '#0284c7'; bg = '#e0f2fe';
+  } else if (name.includes('sofa')) {
+    kind = 'sofa';
+    if (name.includes('hijau')) { fg = '#16a34a'; bg = '#dcfce7'; }
+    else if (name.includes('coklat')) { fg = '#92400e'; bg = '#fef3c7'; }
+    else { fg = '#1e293b'; bg = '#e2e8f0'; }
+  } else if (name.includes('lesehan')) {
+    kind = 'lesehan'; fg = '#0d9488'; bg = '#ccfbf1';
+  } else if (name.includes('rolling door')) {
+    kind = 'door'; fg = '#ea580c'; bg = '#ffedd5';
+  } else if (name.includes('coklat')) {
+    fg = '#b45309'; bg = '#fef3c7';
+  } else if (name.includes('panjang')) {
+    fg = '#2563eb'; bg = '#dbeafe';
+  }
+
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:${bg};color:${fg};flex-shrink:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RADAR_SVG_PATHS[kind]}</svg></span>`;
+}
+
 function renderRadar() {
   const cont = document.getElementById('radarContainer');
   if (!cont) return;
@@ -998,9 +1034,8 @@ function renderRadar() {
           const active = appState.orders.filter(o => isOrderTableActive(o, loc));
           const safe = escapeAttr(loc);
           if (!active.length) {
-            const ic = t.type === 'TAKEAWAY' ? '🛍️' : (t.type === 'BAR' ? '🍸' : '🪑');
             return `<div class="table-node free" onclick="openPosModal('${safe}','')">
-              <div class="table-node-head"><strong class="mono">${escapeHtml(loc)}</strong><span>${ic}</span></div>
+              <div class="table-node-head"><strong class="mono">${escapeHtml(loc)}</strong>${renderRadarTableIcon(t)}</div>
               <div class="text-center muted" style="font-size:11px;margin:8px 0">Tersedia • +Order</div>
               <div class="text-right muted mono" style="font-size:10px">0 tiket</div>
             </div>`;
