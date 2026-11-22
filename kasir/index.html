@@ -397,6 +397,9 @@
             <div class="kpi-card green"><div class="kpi-label">Tunai / Non-Tunai</div><div id="stSplit" class="kpi-val mono" style="font-size:0.93rem">Rp 0 / Rp 0</div></div>
             <div class="kpi-card navy"><div class="kpi-label">Target Kas Laci</div><div id="stTarget" class="kpi-val mono">Rp 0</div></div>
           </div>
+          <div style="display:flex;justify-content:flex-end">
+            <button type="button" class="btn btn-sm" onclick="openSettlementDetail('active')">🔍 Detail Perhitungan Shift</button>
+          </div>
           <div class="form-grid-2">
             <div class="field"><label>Kas Fisik Aktual di Laci (Rp)</label><input id="stActual" type="number" inputmode="numeric" class="input mono" oninput="calcSettleDiff()" placeholder="Masukkan hitung fisik..." /></div>
             <div class="field"><label>Selisih</label><div id="stDiff" class="input mono fw-800" style="background:var(--surface-2)">Rp 0</div></div>
@@ -413,6 +416,33 @@
             </table>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 6B: POPUP DETAIL SETTLEMENT -->
+  <div id="modalSettleDetail" class="modal-backdrop hidden" style="z-index:70">
+    <div class="modal-box xl">
+      <div class="modal-head">
+        <div style="min-width:0">
+          <h3 id="sdTitle">🔍 Detail Settlement</h3>
+          <div id="sdSub" style="font-size:0.76rem;color:#cbd5e1;margin-top:2px;display:flex;flex-wrap:wrap;align-items:center;gap:6px"></div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalSettleDetail')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="sdWarn" class="sd-warn hidden"></div>
+        <div class="subtabs" style="flex-wrap:wrap">
+          <button id="sdTabSummary" class="subtab active" onclick="switchSettleDetailTab('summary')">Ringkasan</button>
+          <button id="sdTabSales" class="subtab" onclick="switchSettleDetailTab('sales')">Omzet (<span id="sdCntSales">0</span>)</button>
+          <button id="sdTabExp" class="subtab" onclick="switchSettleDetailTab('expenses')">Pengeluaran (<span id="sdCntExp">0</span>)</button>
+          <button id="sdTabKasbon" class="subtab" onclick="switchSettleDetailTab('kasbon')">Kasbon Baru (<span id="sdCntKasbon">0</span>)</button>
+        </div>
+        <div id="sdBody"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="sdBtnPrint" class="btn btn-primary" onclick="printCurrentSettleDetail()">🖨️ Cetak Detail</button>
+        <button class="btn" onclick="closeModal('modalSettleDetail')">Tutup</button>
       </div>
     </div>
   </div>
