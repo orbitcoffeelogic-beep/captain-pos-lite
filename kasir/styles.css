@@ -375,6 +375,37 @@ html.ui-large .pos-table-grid { grid-template-columns: repeat(4, minmax(0, 1fr))
   html.ui-large .radar-grid { grid-template-columns: 1fr; }
 }
 
+/* Detail Settlement Modal */
+.sd-warn {
+  background: var(--amber-soft); border: 1px solid #fcd34d; color: #92400e;
+  padding: 9px 12px; border-radius: var(--radius-sm); font-size: 0.82rem; line-height: 1.45;
+  margin-bottom: 10px;
+}
+.sd-info {
+  background: var(--blue-soft); border: 1px solid #bfdbfe; color: #1e40af;
+  padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.82rem; line-height: 1.45;
+  margin-top: 8px;
+}
+.sd-formula {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.sd-formula-title {
+  font-size: 0.76rem; font-weight: 800; text-transform: uppercase; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.sd-formula-eq {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px;
+}
+.sd-formula-val { font-size: 1.12rem; font-weight: 800; color: var(--text); }
+.sd-formula-expr { font-size: 0.84rem; color: #475569; }
+.sd-group-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 10px; background: #f1f5f9; border-radius: 8px;
+  font-weight: 800; font-size: 0.82rem; margin: 10px 0 6px;
+}
+.sd-group-head:first-child { margin-top: 0; }
+
 /* Thermal Browser Print Fallback */
 #thermalPrintContainer { display: none; }
 @media print {
