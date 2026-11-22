@@ -693,8 +693,18 @@ async function fetchFromServer(showNotify = false, forceFull = false) {
     }
     if (Array.isArray(data.settlements)) {
       const locList = safeJson(localStorage.getItem('CAPTAIN_SETTLEMENT_HISTORY'), []);
+      const locById = new Map();
+      locList.forEach(ls => { if (ls && ls.settlementId) locById.set(ls.settlementId, ls); });
       const sm = new Map();
-      data.settlements.forEach(s => { if (s && s.settlementId) sm.set(s.settlementId, s); });
+      data.settlements.forEach(s => {
+        if (!s || !s.settlementId) return;
+        const prev = locById.get(s.settlementId);
+        // Pertahankan snapshot detail lokal agar tidak tertimpa respons ringkas dari server
+        if (prev && prev.detail && !s.detail) {
+          s = Object.assign({}, s, { detail: prev.detail, hasDetail: true });
+        }
+        sm.set(s.settlementId, s);
+      });
       locList.forEach(ls => { if (ls && ls.settlementId && !sm.has(ls.settlementId) && (Date.now() - (Date.parse(ls.timestamp || '') || 0)) < 120000) sm.set(ls.settlementId, ls); });
       const mergedS = Array.from(sm.values()).sort((a, b) => (Date.parse(b.timestamp || '') || 0) - (Date.parse(a.timestamp || '') || 0)).slice(0, 50);
       try { localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(mergedS)); } catch (_) {}
@@ -740,6 +750,21 @@ async function loadArchiveFromServer(btn) {
 // ============================================================================
 // 3. SHIFT ENGINE (05:00 WIB Cut-off + Anti-Double-Count Cicilan + Transfer)
 // ============================================================================
+function fmtTimeHm(ms, fallbackStr) {
+  if (ms && Number(ms) > 0) {
+    const d = new Date(Number(ms));
+    if (!isNaN(d.getTime())) return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+  const m = String(fallbackStr || '').match(/(\d{2}:\d{2})/);
+  return m ? m[1] : '-';
+}
+function normPayGroup(m) {
+  const u = String(m || 'Tunai').toUpperCase();
+  if (u === 'QRIS') return 'QRIS';
+  if (u === 'TRANSFER') return 'Transfer';
+  return 'Tunai';
+}
+
 const ShiftEngine = {
   getCutoff() {
     const stored = Number(localStorage.getItem('CAPTAIN_SHIFT_CUTOFF_MS')) || 0;
@@ -757,43 +782,115 @@ const ShiftEngine = {
     if (rec.settledAtMs && Number(rec.settledAtMs) >= cut) return true;
     return parseTsMs(rec.timestamp, rec.createdAtMs) >= cut;
   },
-  metrics() {
-    const cut = this.getCutoff();
-    let cashSales = 0, nonCashSales = 0, shiftKasbon = 0;
-    const arsipInShift = (appState.piutangArsip || []).filter(a => (Number(a.settledAtMs) || parseTsMs(a.tgl_lunas, 0)) >= cut);
+  /** Satu sumber perhitungan (dipakai kartu Tutup Shift, popup Detail, dan snapshot Settlement). */
+  breakdown(fromMs, toMs = Infinity) {
+    const cut = Number(fromMs) || 0;
+    const end = Number.isFinite(toMs) ? Number(toMs) : Infinity;
+    let cashSales = 0, qrisOnly = 0, transferOnly = 0, shiftKasbon = 0;
+    const sales = [], expenses = [], kasbon = [];
+
+    const arsipInRange = (appState.piutangArsip || []).filter(a => {
+      const t = Number(a.settledAtMs) || parseTsMs(a.tgl_lunas, 0);
+      return t >= cut && t <= end;
+    });
     const arsipBaseIds = new Set();
-    arsipInShift.forEach(a => {
+    arsipInRange.forEach(a => {
       const id = String(a.order_id || '');
       arsipBaseIds.add(id.replace(/-C[A-Z0-9]+$/i, ''));
       const amt = Number(a.total_tagihan) || 0;
-      const m = String(a.metode_pelunasan || 'TUNAI').toUpperCase();
-      if (m === 'QRIS' || m === 'TRANSFER') nonCashSales += amt; else cashSales += amt;
+      const grp = normPayGroup(a.metode_pelunasan);
+      if (grp === 'QRIS') qrisOnly += amt;
+      else if (grp === 'Transfer') transferOnly += amt;
+      else cashSales += amt;
+      const t = Number(a.settledAtMs) || parseTsMs(a.tgl_lunas, 0);
+      sales.push({
+        ms: t, t: fmtTimeHm(t, a.tgl_lunas), id: id.slice(-10),
+        loc: 'Pelunasan', nm: String(a.nama_pelanggan || 'Tamu'),
+        m: grp, a: amt, k: 1
+      });
     });
+
     (appState.orders || []).forEach(o => {
       if (!o || o.status === 'BATAL' || o.status === 'KADALUARSA') return;
+      const crtMs = parseTsMs(o.timestamp, o.createdAtMs);
       if (o.paymentStatus === 'KASBON') {
-        if (parseTsMs(o.timestamp, o.createdAtMs) >= cut) shiftKasbon += Number(o.totalPrice) || 0;
+        if (crtMs >= cut && crtMs <= end) {
+          const amt = Number(o.totalPrice) || 0;
+          shiftKasbon += amt;
+          kasbon.push({
+            ms: crtMs, t: fmtTimeHm(crtMs, o.timestamp), id: String(o.orderId || '').slice(-10),
+            loc: String(o.location || '-'), nm: String(o.customerName || 'Tamu'), a: amt
+          });
+        }
         return;
       }
       if (o.paymentStatus !== 'LUNAS') return;
       if (arsipBaseIds.has(o.orderId)) return; // sudah dihitung dari Arsip_Piutang (anti dobel cicilan)
-      if (!this.inShift(o)) return;
+      const effMs = Math.max(Number(o.settledAtMs) || 0, crtMs);
+      if (effMs < cut || effMs > end) return;
       const amt = Number(o.totalPrice) || 0;
-      const m = String(o.paymentMethod || 'Tunai').toUpperCase();
-      if (m === 'QRIS' || m === 'TRANSFER') nonCashSales += amt; else cashSales += amt;
+      const grp = normPayGroup(o.paymentMethod);
+      if (grp === 'QRIS') qrisOnly += amt;
+      else if (grp === 'Transfer') transferOnly += amt;
+      else cashSales += amt;
+      sales.push({
+        ms: effMs, t: fmtTimeHm(effMs, o.timestamp), id: String(o.orderId || '').slice(-10),
+        loc: String(o.location || '-'), nm: String(o.customerName || 'Tamu'),
+        m: grp, a: amt, k: 0
+      });
     });
+
     let cashExp = 0, nonCashExp = 0;
     (appState.pengeluaran || []).forEach(e => {
-      if (parseTsMs(e.timestamp, e.createdAtMs) >= cut) {
-        if (isExpenseDrawer(e.sumberDana)) cashExp += Number(e.nominal) || 0;
-        else nonCashExp += Number(e.nominal) || 0;
+      const t = parseTsMs(e.timestamp, e.createdAtMs);
+      if (t >= cut && t <= end) {
+        const amt = Number(e.nominal) || 0;
+        const drw = isExpenseDrawer(e.sumberDana) ? 1 : 0;
+        if (drw) cashExp += amt; else nonCashExp += amt;
+        expenses.push({
+          ms: t, t: fmtTimeHm(t, e.timestamp), cat: String(e.kategori || '-'),
+          desc: String(e.keterangan || '-'), src: String(e.sumberDana || '-'),
+          drw, a: amt
+        });
       }
     });
+
+    sales.sort((a, b) => (a.ms || 0) - (b.ms || 0));
+    expenses.sort((a, b) => (a.ms || 0) - (b.ms || 0));
+    kasbon.sort((a, b) => (a.ms || 0) - (b.ms || 0));
+    const nonCashSales = qrisOnly + transferOnly;
+
     return {
-      cutoff: cut, cashSales, nonCashSales, totalRevenue: cashSales + nonCashSales,
-      cashExp, nonCashExp, totalExp: cashExp + nonCashExp, shiftKasbon,
-      targetCash: cashSales - cashExp
+      cutoff: cut, endMs: end,
+      cashSales, qrisOnly, transferOnly, nonCashSales,
+      totalRevenue: cashSales + nonCashSales,
+      cashExp, nonCashExp, totalExp: cashExp + nonCashExp,
+      shiftKasbon, targetCash: cashSales - cashExp,
+      sales, expenses, kasbon
     };
+  },
+  /** Susun snapshot ringkas & aman batas sel Sheets (<45 KB) untuk disimpan saat Tutup Shift. */
+  buildSnapshot(bd, fromMs, toMs) {
+    const stripSale = s => ({ t: s.t, id: s.id, loc: String(s.loc || '').slice(0, 24), nm: String(s.nm || '').slice(0, 24), m: s.m, a: s.a, k: s.k ? 1 : 0 });
+    const stripExp = e => ({ t: e.t, cat: String(e.cat || '').slice(0, 20), desc: String(e.desc || '').slice(0, 48), src: String(e.src || '').slice(0, 20), drw: e.drw ? 1 : 0, a: e.a });
+    const stripKb = k => ({ t: k.t, id: k.id, loc: String(k.loc || '').slice(0, 20), nm: String(k.nm || '').slice(0, 24), a: k.a });
+    const MAX_S = 300, MAX_E = 150, MAX_K = 100;
+    let truncated = (bd.sales.length > MAX_S) || (bd.expenses.length > MAX_E) || (bd.kasbon.length > MAX_K);
+    const snap = {
+      v: 1, fromMs: Number(fromMs) || 0, toMs: Number(toMs) || Date.now(),
+      sales: bd.sales.slice(0, MAX_S).map(stripSale),
+      expenses: bd.expenses.slice(0, MAX_E).map(stripExp),
+      kasbon: bd.kasbon.slice(0, MAX_K).map(stripKb),
+      truncated
+    };
+    while (JSON.stringify(snap).length > 44000 && snap.sales.length > 20) {
+      snap.sales = snap.sales.slice(0, Math.floor(snap.sales.length * 0.8));
+      snap.truncated = true;
+    }
+    return snap;
+  },
+  metrics() {
+    return this.breakdown(this.getCutoff(), Infinity);
   }
 };
 
@@ -1679,30 +1776,39 @@ function calcSettleDiff() {
   el.style.color = diff === 0 ? 'var(--green)' : (diff > 0 ? 'var(--blue)' : 'var(--rose)');
 }
 function confirmSettlement() {
-  const m = ShiftEngine.metrics();
+  const now = new Date();
+  const nowMs = now.getTime();
+  const bd = ShiftEngine.breakdown(ShiftEngine.getCutoff(), nowMs);
   const actual = Number(document.getElementById('stActual').value);
   if (!Number.isFinite(actual) || actual < 0) return showToast('Masukkan kas fisik aktual', 'err');
-  if (!confirm(`Konfirmasi Settlement shift?\nTarget Laci: ${formatRupiah(m.targetCash)}\nFisik Aktual: ${formatRupiah(actual)}`)) return;
-  const now = new Date();
-  const startD = new Date(m.cutoff);
-  const rec = {
-    settlementId: 'SETTLE-' + Date.now(),
+  if (!confirm(`Konfirmasi Settlement shift?\nTarget Laci: ${formatRupiah(bd.targetCash)}\nFisik Aktual: ${formatRupiah(actual)}`)) return;
+  const startD = new Date(bd.cutoff);
+  const snapshot = ShiftEngine.buildSnapshot(bd, bd.cutoff, nowMs);
+  const baseRec = {
+    settlementId: 'SETTLE-' + nowMs,
     timestamp: now.toISOString(),
     shiftDateStr: nowTimestampStr() + ' WIB',
     staffName: appState.activeCrew?.nama || 'Kasir',
     shiftStartStr: `${pad2(startD.getHours())}:${pad2(startD.getMinutes())}`,
     shiftEndStr: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
-    totalRevenue: m.totalRevenue, cashSales: m.cashSales, qrisSales: m.nonCashSales,
-    cashExpense: m.cashExp, qrisExpense: m.nonCashExp, totalExpense: m.totalExp,
-    shiftKasbon: m.shiftKasbon, targetCash: m.targetCash, actualCash: actual,
-    diff: actual - m.targetCash, note: (document.getElementById('stNote').value || '').trim() || '-'
+    shiftStartMs: bd.cutoff,
+    shiftEndMs: nowMs,
+    totalRevenue: bd.totalRevenue, cashSales: bd.cashSales, qrisSales: bd.nonCashSales,
+    cashExpense: bd.cashExp, qrisExpense: bd.nonCashExp, totalExpense: bd.totalExp,
+    shiftKasbon: bd.shiftKasbon, targetCash: bd.targetCash, actualCash: actual,
+    diff: actual - bd.targetCash, note: (document.getElementById('stNote').value || '').trim() || '-'
   };
+  const localRec = Object.assign({}, baseRec, { hasDetail: true, detail: snapshot });
   const hist = safeJson(localStorage.getItem('CAPTAIN_SETTLEMENT_HISTORY'), []);
-  hist.unshift(rec);
-  localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(hist.slice(0, 50)));
-  ShiftEngine.setCutoff(Date.now());
-  SyncQueue.enqueue(Object.assign({ action: 'SETTLEMENT_SHIFT' }, rec));
-  Printer.printSettlement(rec);
+  hist.unshift(localRec);
+  try { localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(hist.slice(0, 50))); } catch (_) {
+    // Fallback jika kuota localStorage penuh: simpan tanpa detail lama
+    const slim = hist.slice(0, 50).map((h, i) => i < 10 ? h : Object.assign({}, h, { detail: undefined }));
+    try { localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(slim)); } catch (_) {}
+  }
+  ShiftEngine.setCutoff(nowMs);
+  SyncQueue.enqueue(Object.assign({ action: 'SETTLEMENT_SHIFT', detailJson: JSON.stringify(snapshot) }, baseRec));
+  Printer.printSettlement(baseRec);
   closeModal('modalSettlement');
   renderAllActive();
   showToast('✓ Settlement berhasil & shift di-reset', 'ok');
@@ -1714,12 +1820,384 @@ function renderSettlementHistory() {
     <td class="text-right mono">${formatRupiah(r.totalRevenue)}</td><td class="text-right mono">${formatRupiah(r.targetCash)}</td>
     <td class="text-right mono fw-700">${formatRupiah(r.actualCash)}</td>
     <td class="text-right mono" style="color:${r.diff < 0 ? 'var(--rose)' : 'var(--green)'}">${formatRupiah(r.diff)}</td>
-    <td><button class="btn btn-xs" onclick="reprintSettlement(${i})">🖨️</button></td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-xs" onclick="openSettlementDetail('history',${i})" title="Detail Perhitungan">🔍</button>
+      <button class="btn btn-xs" onclick="reprintSettlement(${i})" title="Cetak Ulang">🖨️</button>
+    </td>
   </tr>`).join('') : '<tr><td colspan="7" class="text-center muted">Belum ada riwayat</td></tr>';
 }
 function reprintSettlement(idx) {
   const hist = safeJson(localStorage.getItem('CAPTAIN_SETTLEMENT_HISTORY'), []);
   if (hist[idx]) Printer.printSettlement(hist[idx]);
+}
+
+// POPUP DETAIL SETTLEMENT (HYBRID: SNAPSHOT + FALLBACK REKONSTRUKSI)
+let settleDetailCtx = null;
+let settleDetailTab = 'summary';
+let settleDetailReqId = 0;
+
+function opDayStartMsFor(ms) {
+  const d = new Date(ms);
+  if (d.getHours() < 5) d.setDate(d.getDate() - 1);
+  d.setHours(5, 0, 0, 0);
+  return d.getTime();
+}
+function resolveSettlementRange(rec, prevRec) {
+  const toMs = Number(rec.shiftEndMs) || Date.parse(rec.timestamp || '') || parseTsMs(rec.shiftDateStr, Date.now());
+  if (Number(rec.shiftStartMs) > 0) return { fromMs: Number(rec.shiftStartMs), toMs };
+  const prevMs = prevRec ? (Number(prevRec.shiftEndMs) || Date.parse(prevRec.timestamp || '') || 0) : 0;
+  const m = String(rec.shiftStartStr || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (m) {
+    const startD = new Date(toMs);
+    startD.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    if (startD.getTime() > toMs + 60000) startD.setDate(startD.getDate() - 1);
+    const estMs = startD.getTime();
+    // Jika selisih dengan settlement sebelumnya < 2 menit, pakai ms tepat agar tidak bentrok 1 menit yang sama
+    if (prevMs > 0 && Math.abs(prevMs - estMs) < 120000 && prevMs < toMs) {
+      return { fromMs: prevMs + 1, toMs };
+    }
+    return { fromMs: estMs, toMs };
+  }
+  const opStart = opDayStartMsFor(toMs);
+  return { fromMs: (prevMs > opStart && prevMs < toMs) ? (prevMs + 1) : opStart, toMs };
+}
+function cacheSettlementDetailLocally(settlementId, detailObj) {
+  if (!settlementId || !detailObj) return;
+  try {
+    const hist = safeJson(localStorage.getItem('CAPTAIN_SETTLEMENT_HISTORY'), []);
+    let changed = false;
+    hist.forEach(h => {
+      if (h && h.settlementId === settlementId) {
+        h.detail = detailObj;
+        h.hasDetail = true;
+        changed = true;
+      }
+    });
+    if (changed) localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(hist));
+  } catch (_) {}
+}
+async function fetchSettlementDetailFromServer(settlementId) {
+  if (!SCRIPT_URL || SCRIPT_URL.includes('TEMPEL_URL') || !navigator.onLine) return null;
+  const sep = SCRIPT_URL.includes('?') ? '&' : '?';
+  const url = `${SCRIPT_URL}${sep}action=SETTLEMENT_DETAIL&settlementId=${encodeURIComponent(settlementId)}&t=${Date.now()}`;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url, { redirect: 'follow', cache: 'no-cache', signal: ctrl.signal });
+    clearTimeout(tid);
+    const data = await res.json();
+    if (data && data.status === 'success' && data.detail && typeof data.detail === 'object') {
+      return data.detail;
+    }
+  } catch (_) { clearTimeout(tid); }
+  return null;
+}
+function buildContextFromDetail(rec, detail, sourceKind, extraNote) {
+  const sales = Array.isArray(detail.sales) ? detail.sales : [];
+  const expenses = Array.isArray(detail.expenses) ? detail.expenses : [];
+  const kasbon = Array.isArray(detail.kasbon) ? detail.kasbon : [];
+  let reconCash = 0, reconQris = 0, reconTrf = 0, reconCashExp = 0, reconNonCashExp = 0;
+  sales.forEach(s => {
+    const a = Number(s.a) || 0;
+    const g = normPayGroup(s.m);
+    if (g === 'QRIS') reconQris += a;
+    else if (g === 'Transfer') reconTrf += a;
+    else reconCash += a;
+  });
+  expenses.forEach(e => {
+    const a = Number(e.a) || 0;
+    if (e.drw) reconCashExp += a; else reconNonCashExp += a;
+  });
+  const reconNonCash = reconQris + reconTrf;
+  const reconRev = reconCash + reconNonCash;
+  const reconTarget = reconCash - reconCashExp;
+
+  let mismatch = null;
+  if (sourceKind === 'reconstruct') {
+    const diffs = [];
+    if (reconRev !== (Number(rec.totalRevenue) || 0)) diffs.push(`Omzet tersimpan ${formatRupiah(rec.totalRevenue)} vs data saat ini ${formatRupiah(reconRev)}`);
+    if (reconCash !== (Number(rec.cashSales) || 0)) diffs.push(`Tunai tersimpan ${formatRupiah(rec.cashSales)} vs saat ini ${formatRupiah(reconCash)}`);
+    if (reconNonCash !== (Number(rec.qrisSales) || 0)) diffs.push(`Non-Tunai tersimpan ${formatRupiah(rec.qrisSales)} vs saat ini ${formatRupiah(reconNonCash)}`);
+    if (reconCashExp !== (Number(rec.cashExpense) || 0)) diffs.push(`Keluar Laci tersimpan ${formatRupiah(rec.cashExpense)} vs saat ini ${formatRupiah(reconCashExp)}`);
+    if (reconTarget !== (Number(rec.targetCash) || 0)) diffs.push(`Target tersimpan ${formatRupiah(rec.targetCash)} vs saat ini ${formatRupiah(reconTarget)}`);
+    if (diffs.length) mismatch = diffs;
+  }
+
+  return {
+    rec, sourceKind, extraNote: extraNote || '',
+    sales, expenses, kasbon,
+    qrisOnly: reconQris, transferOnly: reconTrf,
+    truncated: !!detail.truncated,
+    mismatch
+  };
+}
+async function openSettlementDetail(mode, idx) {
+  const reqId = ++settleDetailReqId;
+  settleDetailTab = 'summary';
+
+  if (mode === 'active') {
+    const now = new Date();
+    const bd = ShiftEngine.breakdown(ShiftEngine.getCutoff(), now.getTime());
+    const startD = new Date(bd.cutoff);
+    const actVal = Number(document.getElementById('stActual')?.value);
+    const actualCash = Number.isFinite(actVal) ? actVal : bd.targetCash;
+    const rec = {
+      settlementId: 'SHIFT-AKTIF',
+      shiftDateStr: nowTimestampStr() + ' WIB',
+      staffName: appState.activeCrew?.nama || 'Kasir',
+      shiftStartStr: `${pad2(startD.getHours())}:${pad2(startD.getMinutes())}`,
+      shiftEndStr: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
+      totalRevenue: bd.totalRevenue, cashSales: bd.cashSales, qrisSales: bd.nonCashSales,
+      cashExpense: bd.cashExp, qrisExpense: bd.nonCashExp, totalExpense: bd.totalExp,
+      shiftKasbon: bd.shiftKasbon, targetCash: bd.targetCash, actualCash,
+      diff: actualCash - bd.targetCash,
+      note: (document.getElementById('stNote')?.value || '').trim() || '-'
+    };
+    settleDetailCtx = buildContextFromDetail(rec, { sales: bd.sales, expenses: bd.expenses, kasbon: bd.kasbon, truncated: false }, 'active');
+    renderSettleDetailModal();
+    openModal('modalSettleDetail');
+    return;
+  }
+
+  const hist = safeJson(localStorage.getItem('CAPTAIN_SETTLEMENT_HISTORY'), []);
+  const rec = hist[idx];
+  if (!rec) return showToast('Data settlement tidak ditemukan', 'err');
+  const prevRec = hist[idx + 1] || null;
+
+  // 1. Snapshot sudah ada di cache lokal -> instan!
+  if (rec.detail && typeof rec.detail === 'object') {
+    settleDetailCtx = buildContextFromDetail(rec, rec.detail, 'snapshot');
+    renderSettleDetailModal();
+    openModal('modalSettleDetail');
+    return;
+  }
+
+  // 2. Snapshot ada di server (multi-device) -> tarik on-demand 1 baris
+  if (rec.hasDetail && navigator.onLine) {
+    settleDetailCtx = null;
+    setText('sdTitle', `🔍 Detail Settlement — ${rec.staffName || 'Kasir'}`);
+    document.getElementById('sdSub').innerHTML = `<span>${escapeHtml(rec.shiftDateStr || '')}</span><span class="badge b-blue">Memuat Snapshot...</span>`;
+    document.getElementById('sdWarn').classList.add('hidden');
+    document.getElementById('sdBody').innerHTML = `<div class="muted text-center" style="padding:28px">⏳ Mengambil snapshot detail dari Google Sheets...</div>`;
+    const btnP = document.getElementById('sdBtnPrint'); if (btnP) btnP.disabled = true;
+    openModal('modalSettleDetail');
+
+    const srvDetail = await fetchSettlementDetailFromServer(rec.settlementId);
+    if (reqId !== settleDetailReqId) return; // dibatalkan karena user buka baris lain
+    if (btnP) btnP.disabled = false;
+
+    if (srvDetail) {
+      cacheSettlementDetailLocally(rec.settlementId, srvDetail);
+      settleDetailCtx = buildContextFromDetail(rec, srvDetail, 'snapshot');
+      renderSettleDetailModal();
+      return;
+    }
+    // Gagal tarik dari server -> fallback ke rekonstruksi lokal
+    const rng = resolveSettlementRange(rec, prevRec);
+    const bd = ShiftEngine.breakdown(rng.fromMs, rng.toMs);
+    settleDetailCtx = buildContextFromDetail(rec, bd, 'reconstruct', 'Snapshot server belum bisa dimuat — menampilkan rekonstruksi lokal.');
+    renderSettleDetailModal();
+    return;
+  }
+
+  // 3. Riwayat lama (atau offline belum ter-cache) -> Rekonstruksi lokal
+  const rng = resolveSettlementRange(rec, prevRec);
+  const bd = ShiftEngine.breakdown(rng.fromMs, rng.toMs);
+  const offlineHint = (rec.hasDetail && !navigator.onLine) ? 'Perangkat sedang offline — menampilkan rekonstruksi lokal.' : '';
+  settleDetailCtx = buildContextFromDetail(rec, bd, 'reconstruct', offlineHint);
+  renderSettleDetailModal();
+  openModal('modalSettleDetail');
+}
+function renderSettleDetailModal() {
+  const ctx = settleDetailCtx;
+  if (!ctx) return;
+  const r = ctx.rec;
+  const btnP = document.getElementById('sdBtnPrint'); if (btnP) btnP.disabled = false;
+
+  setText('sdTitle', `🔍 Detail Settlement — ${r.staffName || 'Kasir'}`);
+  const rangeTxt = (r.shiftStartStr && r.shiftEndStr) ? `Shift ${r.shiftStartStr} → ${r.shiftEndStr}` : '';
+  const srcBadge = ctx.sourceKind === 'snapshot'
+    ? '<span class="badge b-green">Snapshot</span>'
+    : (ctx.sourceKind === 'active'
+      ? '<span class="badge b-blue">Shift Berjalan</span>'
+      : '<span class="badge b-amber">Rekonstruksi</span>');
+  document.getElementById('sdSub').innerHTML = [
+    r.shiftDateStr ? `<span>${escapeHtml(r.shiftDateStr)}</span>` : '',
+    rangeTxt ? `<span>• ${escapeHtml(rangeTxt)}</span>` : '',
+    srcBadge
+  ].filter(Boolean).join(' ');
+
+  const warnEl = document.getElementById('sdWarn');
+  if (ctx.mismatch && ctx.mismatch.length) {
+    warnEl.innerHTML = `<strong>⚠️ Data transaksi telah berubah sejak settlement (atau sebagian data sudah melewati batas arsip lokal).</strong><br/>`
+      + `Angka resmi tetap mengacu pada nilai yang tersimpan (${formatRupiah(r.totalRevenue)} / Target ${formatRupiah(r.targetCash)}).<br/>`
+      + `<span class="mono" style="font-size:0.76rem">${ctx.mismatch.map(escapeHtml).join(' • ')}</span>`;
+    warnEl.classList.remove('hidden');
+  } else if (ctx.extraNote) {
+    warnEl.innerHTML = `ℹ️ ${escapeHtml(ctx.extraNote)}`;
+    warnEl.classList.remove('hidden');
+  } else {
+    warnEl.classList.add('hidden');
+  }
+
+  setText('sdCntSales', String(ctx.sales.length));
+  setText('sdCntExp', String(ctx.expenses.length));
+  setText('sdCntKasbon', String(ctx.kasbon.length));
+  switchSettleDetailTab(settleDetailTab);
+}
+function switchSettleDetailTab(tab) {
+  settleDetailTab = tab;
+  document.getElementById('sdTabSummary').classList.toggle('active', tab === 'summary');
+  document.getElementById('sdTabSales').classList.toggle('active', tab === 'sales');
+  document.getElementById('sdTabExp').classList.toggle('active', tab === 'expenses');
+  document.getElementById('sdTabKasbon').classList.toggle('active', tab === 'kasbon');
+  renderSettleDetailBody();
+}
+function renderSettleDetailBody() {
+  const ctx = settleDetailCtx;
+  const body = document.getElementById('sdBody');
+  if (!ctx || !body) return;
+  const r = ctx.rec;
+
+  if (settleDetailTab === 'summary') {
+    const diff = Number(r.diff) || 0;
+    const diffBadge = diff === 0
+      ? '<span class="badge b-green">PAS</span>'
+      : (diff > 0 ? '<span class="badge b-blue">LEBIH</span>' : '<span class="badge b-rose">KURANG</span>');
+    const diffSign = diff > 0 ? '+' : '';
+    const nonCashSub = (ctx.qrisOnly > 0 || ctx.transferOnly > 0)
+      ? `<div class="muted" style="font-size:0.78rem;margin-top:4px">Rincian Non-Tunai: QRIS <span class="mono fw-700">${formatRupiah(ctx.qrisOnly)}</span> • Transfer <span class="mono fw-700">${formatRupiah(ctx.transferOnly)}</span></div>`
+      : '';
+    const negTargetNote = (Number(r.targetCash) || 0) < 0
+      ? `<div class="sd-info">⚠️ <strong>Target Laci minus:</strong> Pengeluaran dari laci (${formatRupiah(r.cashExpense)}) melebihi penjualan tunai (${formatRupiah(r.cashSales)}) pada shift ini.</div>`
+      : '';
+    const truncNote = ctx.truncated
+      ? `<div class="sd-info">ℹ️ Daftar rincian pada snapshot dipotong untuk menjaga batas penyimpanan, namun seluruh angka total di atas 100% akurat.</div>`
+      : '';
+    const nonCashExpLine = (Number(r.qrisExpense) || 0) > 0
+      ? `<div class="muted" style="font-size:0.78rem;margin-top:4px">Pengeluaran Non-Laci (tidak mengurangi target): <span class="mono fw-700">${formatRupiah(r.qrisExpense)}</span></div>`
+      : '';
+
+    body.innerHTML = `
+      <div class="sd-formula">
+        <div class="sd-formula-title"><span>1. Omzet Shift</span><span>Tunai + Non-Tunai</span></div>
+        <div class="sd-formula-eq">
+          <span class="sd-formula-val mono">${formatRupiah(r.totalRevenue)}</span>
+          <span class="sd-formula-expr mono">${formatRupiah(r.cashSales)} + ${formatRupiah(r.qrisSales)}</span>
+        </div>
+        ${nonCashSub}
+      </div>
+      <div class="sd-formula">
+        <div class="sd-formula-title"><span>2. Target Kas Laci</span><span>Tunai − Keluar Laci</span></div>
+        <div class="sd-formula-eq">
+          <span class="sd-formula-val mono">${formatRupiah(r.targetCash)}</span>
+          <span class="sd-formula-expr mono">${formatRupiah(r.cashSales)} − ${formatRupiah(r.cashExpense)}</span>
+        </div>
+        ${nonCashExpLine}
+      </div>
+      <div class="sd-formula">
+        <div class="sd-formula-title"><span>3. Selisih Laci</span><span>Fisik − Target ${diffBadge}</span></div>
+        <div class="sd-formula-eq">
+          <span class="sd-formula-val mono" style="color:${diff < 0 ? 'var(--rose)' : (diff > 0 ? 'var(--blue)' : 'var(--green)')}">${diffSign}${formatRupiah(diff)}</span>
+          <span class="sd-formula-expr mono">${formatRupiah(r.actualCash)} − (${formatRupiah(r.targetCash)})</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:6px 2px;font-size:0.84rem">
+        <span><strong>Kasbon Baru Shift:</strong> <span class="mono">${formatRupiah(r.shiftKasbon || 0)}</span> <span class="muted">(info, tidak masuk omzet)</span></span>
+        <span><strong>Catatan:</strong> ${escapeHtml(r.note || '-')}</span>
+      </div>
+      ${negTargetNote}${truncNote}
+    `;
+    return;
+  }
+
+  if (settleDetailTab === 'sales') {
+    if (!ctx.sales.length) {
+      body.innerHTML = `<div class="muted text-center" style="padding:24px">Tidak ada rincian transaksi omzet pada shift ini.</div>`;
+      return;
+    }
+    const groups = ['Tunai', 'QRIS', 'Transfer'];
+    const html = groups.map(grp => {
+      const items = ctx.sales.filter(s => normPayGroup(s.m) === grp);
+      if (!items.length) return '';
+      const sub = items.reduce((acc, s) => acc + (Number(s.a) || 0), 0);
+      return `
+        <div class="sd-group-head">
+          <span>${grp === 'Tunai' ? '💵' : '💳'} ${grp} (${items.length} transaksi)</span>
+          <span class="mono">${formatRupiah(sub)}</span>
+        </div>
+        <div class="table-wrap" style="margin-bottom:8px">
+          <table>
+            <thead><tr><th>Jam</th><th>ID</th><th>Meja / Pelanggan</th><th class="text-right">Nominal</th></tr></thead>
+            <tbody>${items.map(s => `<tr>
+              <td class="mono">${escapeHtml(s.t || '-')}</td>
+              <td class="mono">#${escapeHtml(s.id || '-')} ${s.k ? '<span class="badge b-purple">CICILAN</span>' : ''}</td>
+              <td>${escapeHtml(s.loc || '-')} • <strong>${escapeHtml(s.nm || 'Tamu')}</strong></td>
+              <td class="text-right mono fw-700">${formatRupiah(s.a)}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+    body.innerHTML = html;
+    return;
+  }
+
+  if (settleDetailTab === 'expenses') {
+    if (!ctx.expenses.length) {
+      body.innerHTML = `<div class="muted text-center" style="padding:24px">Tidak ada pengeluaran pada shift ini.</div>`;
+      return;
+    }
+    const drwList = ctx.expenses.filter(e => e.drw);
+    const nonDrwList = ctx.expenses.filter(e => !e.drw);
+    const renderExpGroup = (title, list) => {
+      if (!list.length) return '';
+      const sub = list.reduce((acc, e) => acc + (Number(e.a) || 0), 0);
+      return `
+        <div class="sd-group-head">
+          <span>${title} (${list.length})</span>
+          <span class="mono">${formatRupiah(sub)}</span>
+        </div>
+        <div class="table-wrap" style="margin-bottom:8px">
+          <table>
+            <thead><tr><th>Jam</th><th>Kategori &amp; Keterangan</th><th>Sumber</th><th class="text-right">Nominal</th></tr></thead>
+            <tbody>${list.map(e => `<tr>
+              <td class="mono">${escapeHtml(e.t || '-')}</td>
+              <td><span class="badge b-slate">${escapeHtml(e.cat || '-')}</span> ${escapeHtml(e.desc || '-')}</td>
+              <td>${escapeHtml(e.src || '-')}</td>
+              <td class="text-right mono fw-700">${formatRupiah(e.a)}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+    };
+    body.innerHTML = renderExpGroup('💸 Keluar dari Laci (Mengurangi Target)', drwList)
+      + renderExpGroup('🏦 Non-Laci / Transfer (Tidak Mengurangi Target)', nonDrwList);
+    return;
+  }
+
+  // Tab: Kasbon Baru
+  if (!ctx.kasbon.length) {
+    body.innerHTML = `<div class="muted text-center" style="padding:24px">Tidak ada kasbon baru yang dicatat pada shift ini.</div>`;
+    return;
+  }
+  const kbSum = ctx.kasbon.reduce((acc, k) => acc + (Number(k.a) || 0), 0);
+  body.innerHTML = `
+    <div class="sd-info" style="margin-top:0;margin-bottom:8px">ℹ️ Daftar kasbon baru pada shift ini bersifat informasi dan <strong>tidak masuk ke Omzet</strong> sampai dilunasi.</div>
+    <div class="sd-group-head"><span>📒 Kasbon Baru (${ctx.kasbon.length} nota)</span><span class="mono">${formatRupiah(kbSum)}</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Jam</th><th>ID</th><th>Meja / Pelanggan</th><th class="text-right">Tagihan</th></tr></thead>
+        <tbody>${ctx.kasbon.map(k => `<tr>
+          <td class="mono">${escapeHtml(k.t || '-')}</td>
+          <td class="mono">#${escapeHtml(k.id || '-')}</td>
+          <td>${escapeHtml(k.loc || '-')} • <strong>${escapeHtml(k.nm || 'Tamu')}</strong></td>
+          <td class="text-right mono fw-700">${formatRupiah(k.a)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+function printCurrentSettleDetail() {
+  if (!settleDetailCtx) return showToast('Detail belum siap dicetak', 'warn');
+  Printer.printSettlementDetail(settleDetailCtx);
 }
 
 // RIWAYAT TRANSAKSI
@@ -2102,6 +2580,85 @@ const Printer = {
       try { await this.sendBytes(new Uint8Array([0x1B, 0x40, 0x1B, 0x4D, 0x01, ...new TextEncoder().encode(txt), 0x1D, 0x56, 0x42, 0x00])); return; } catch (_) {}
     }
     const el = document.getElementById('thermalPrintContainer');
+    el.innerHTML = `<pre style="margin:0;white-space:pre-wrap">${escapeHtml(txt)}</pre>`;
+    window.print();
+  },
+  async printSettlementDetail(ctx) {
+    if (!ctx || !ctx.rec) return;
+    const c = this.getCfg();
+    const is80 = c.paperWidth === '80';
+    const w = is80 ? 48 : 36, pad = '     ';
+    const div = pad + '-'.repeat(w) + '\n';
+    const r = ctx.rec;
+    const srcLabel = ctx.sourceKind === 'snapshot' ? 'Snapshot' : (ctx.sourceKind === 'active' ? 'Shift Berjalan' : 'Rekonstruksi');
+    const shiftSpan = (r.shiftStartStr && r.shiftEndStr) ? `${r.shiftStartStr}-${r.shiftEndStr}` : '-';
+    const out = [
+      '\n', `${pad}=== DETAIL SETTLEMENT ===\n`,
+      `${pad}${r.shiftDateStr || ''}\n`,
+      `${pad}Petugas: ${r.staffName || 'Kasir'} (${shiftSpan})\n`,
+      `${pad}Sumber : ${srcLabel}\n`,
+      div,
+      `${pad}Omzet   : ${formatRupiah(r.totalRevenue)}\n`,
+      `${pad}  Tunai : ${formatRupiah(r.cashSales)}\n`,
+      `${pad}  NonTun: ${formatRupiah(r.qrisSales)}\n`,
+      `${pad}Kel.Laci: ${formatRupiah(r.cashExpense)}\n`,
+      `${pad}Target  : ${formatRupiah(r.targetCash)}\n`,
+      `${pad}Fisik   : ${formatRupiah(r.actualCash)}\n`,
+      `${pad}Selisih : ${formatRupiah(r.diff)}\n`,
+      `${pad}Catatan : ${r.note || '-'}\n`,
+      div
+    ];
+
+    ['Tunai', 'QRIS', 'Transfer'].forEach(grp => {
+      const items = (ctx.sales || []).filter(s => normPayGroup(s.m) === grp);
+      if (!items.length) return;
+      const sub = items.reduce((acc, s) => acc + (Number(s.a) || 0), 0);
+      out.push(`${pad}[OMZET ${grp.toUpperCase()} (${items.length})]\n`);
+      items.forEach(s => {
+        const nm = String(s.nm || 'Tamu').slice(0, is80 ? 22 : 12);
+        const tag = s.k ? '[CCL]' : '';
+        out.push(`${pad}${s.t || '--:--'} ${nm}${tag} ${formatRupiah(s.a)}\n`);
+      });
+      out.push(`${pad}Sub ${grp}: ${formatRupiah(sub)}\n`);
+    });
+
+    const drwExp = (ctx.expenses || []).filter(e => e.drw);
+    if (drwExp.length) {
+      out.push(div, `${pad}[KELUAR LACI (${drwExp.length})]\n`);
+      drwExp.forEach(e => {
+        const ds = String(e.desc || e.cat || '-').slice(0, is80 ? 24 : 14);
+        out.push(`${pad}${e.t || '--:--'} ${ds} ${formatRupiah(e.a)}\n`);
+      });
+      out.push(`${pad}Sub Laci: ${formatRupiah(drwExp.reduce((a, e) => a + (Number(e.a) || 0), 0))}\n`);
+    }
+    const nonDrwExp = (ctx.expenses || []).filter(e => !e.drw);
+    if (nonDrwExp.length) {
+      out.push(`${pad}[EXP NON-LACI (${nonDrwExp.length})]\n`);
+      nonDrwExp.forEach(e => {
+        const ds = String(e.desc || e.cat || '-').slice(0, is80 ? 24 : 14);
+        out.push(`${pad}${e.t || '--:--'} ${ds} ${formatRupiah(e.a)}\n`);
+      });
+    }
+    if ((ctx.kasbon || []).length) {
+      out.push(div, `${pad}[KASBON BARU - INFO (${ctx.kasbon.length})]\n`);
+      ctx.kasbon.forEach(k => {
+        const nm = String(k.nm || 'Tamu').slice(0, is80 ? 22 : 14);
+        out.push(`${pad}${k.t || '--:--'} ${nm} ${formatRupiah(k.a)}\n`);
+      });
+    }
+    if (ctx.mismatch && ctx.mismatch.length) {
+      out.push(div, `${pad}! Ket: Data rekonstruksi beda\n${pad}  dgn angka resmi tersimpan.\n`);
+    }
+    out.push(div, '\n\n\n');
+    const txt = out.join('');
+    if (this.char) {
+      try {
+        await this.sendBytes(new Uint8Array([0x1B, 0x40, 0x1B, 0x4D, 0x01, 0x1B, 0x61, 0x00, ...new TextEncoder().encode(txt), 0x1D, 0x56, 0x42, 0x00]));
+        return showToast('Detail settlement tercetak via BT', 'ok');
+      } catch (_) { showToast('BT gagal, buka dialog cetak', 'warn'); }
+    }
+    const el = document.getElementById('thermalPrintContainer');
+    el.className = is80 ? 'w80' : '';
     el.innerHTML = `<pre style="margin:0;white-space:pre-wrap">${escapeHtml(txt)}</pre>`;
     window.print();
   },
