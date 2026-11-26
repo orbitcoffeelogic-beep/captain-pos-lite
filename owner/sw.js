@@ -1,4 +1,4 @@
-const CACHE_NAME = 'captain-owner-v1.0';
+const CACHE_NAME = 'captain-owner-v1.1';
 const CORE_ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

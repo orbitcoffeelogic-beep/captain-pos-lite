@@ -1,11 +1,12 @@
 /* CAPTAIN POS LITE (v1.0-lite) — Ultra-Fast Cashier, Radar & KDS Engine for Older Android Tablets */
 'use strict';
 
-const APP_VERSION = 'v1.0-lite';
+const APP_VERSION = 'v1.1-lite';
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLa2QzC2FMgCYWOeroreDWTaXFY8UR9dTikqaohMEFKD8KZMfjiFhNy_ywnxZaV_A6/exec';
 const STORAGE_KEY = 'CAPTAIN_COFFEE_OPS_STATE_V1';
 
 let SCRIPT_URL = localStorage.getItem('CAPTAIN_GAS_URL') || DEFAULT_SCRIPT_URL;
+let currentStaffPin = localStorage.getItem('CAPTAIN_STAFF_PIN') || sessionStorage.getItem('CAPTAIN_STAFF_PIN') || '';
 let POLL_INTERVAL_SEC = Number(localStorage.getItem('CAPTAIN_POLL_SEC')) || 5;
 let UI_SCALE = localStorage.getItem('CAPTAIN_UI_SCALE') === 'large' ? 'large' : 'medium';
 document.documentElement.classList.toggle('ui-large', UI_SCALE === 'large');
@@ -41,6 +42,7 @@ const DEFAULT_TABLES = [
 ];
 
 let MENU_CATALOG = safeJson(localStorage.getItem('CAPTAIN_CACHED_MENU'), []);
+let ALL_MENU_CATALOG = safeJson(localStorage.getItem('CAPTAIN_CACHED_ALL_MENU'), MENU_CATALOG);
 let TABLE_CONFIG = safeJson(localStorage.getItem('CAPTAIN_CACHED_TABLES'), DEFAULT_TABLES);
 if (!Array.isArray(TABLE_CONFIG) || TABLE_CONFIG.length === 0) TABLE_CONFIG = DEFAULT_TABLES.slice();
 
@@ -108,11 +110,57 @@ function showToast(msg, tone = 'info') {
 function openModal(id) { const el = document.getElementById(id); if (el) el.classList.remove('hidden'); }
 function closeModal(id) { const el = document.getElementById(id); if (el) el.classList.add('hidden'); }
 
+function getActiveStaffPin() {
+  return String(currentStaffPin || appState?.activeCrew?.pin || '').trim();
+}
+function appendStaffPinQuery(url) {
+  const pin = getActiveStaffPin();
+  if (!pin || /[?&](staff_pin|pin)=/i.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}staff_pin=${encodeURIComponent(pin)}`;
+}
+
+let _pinAuthResolver = null;
+function requestPinModal(opts = {}) {
+  return new Promise((resolve) => {
+    if (_pinAuthResolver) {
+      try { _pinAuthResolver(null); } catch (_) {}
+    }
+    _pinAuthResolver = resolve;
+    const titleEl = document.getElementById('pinAuthTitle');
+    const subEl = document.getElementById('pinAuthSub');
+    const inp = document.getElementById('pinAuthInput');
+    if (titleEl) titleEl.textContent = opts.title || '🔒 Otorisasi PIN Kru';
+    if (subEl) subEl.textContent = opts.subtitle || 'Masukkan PIN Kru untuk sinkronisasi dengan Spreadsheet.';
+    if (inp) {
+      inp.type = opts.inputType || 'password';
+      inp.placeholder = opts.placeholder || 'Masukkan PIN...';
+      inp.value = opts.defaultVal !== undefined ? String(opts.defaultVal) : '';
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch (_) {} }, 25);
+    }
+    openModal('modalPinAuth');
+  });
+}
+function submitPinAuthModal() {
+  const inp = document.getElementById('pinAuthInput');
+  const val = String(inp?.value || '').trim();
+  const resFn = _pinAuthResolver;
+  _pinAuthResolver = null;
+  closeModal('modalPinAuth');
+  if (resFn) resFn(val);
+}
+function cancelPinAuthModal() {
+  const resFn = _pinAuthResolver;
+  _pinAuthResolver = null;
+  closeModal('modalPinAuth');
+  if (resFn) resFn(null);
+}
+
 function loadInitialState() {
   const parsed = safeJson(localStorage.getItem(STORAGE_KEY), {});
   const kru = safeJson(localStorage.getItem('CAPTAIN_CACHED_KRU'), DEFAULT_KRU);
   let active = safeJson(localStorage.getItem('CAPTAIN_ACTIVE_CREW'), null);
   if (!active) active = (Array.isArray(kru) && kru.find(k => String(k.peran || '').toLowerCase().includes('kasir'))) || DEFAULT_KRU[1];
+  const defFloat = Number(parsed.openingFloatDefault);
   return {
     orders: Array.isArray(parsed.orders) ? parsed.orders : [],
     piutangAktif: Array.isArray(parsed.piutangAktif) ? parsed.piutangAktif : [],
@@ -121,7 +169,8 @@ function loadInitialState() {
     pengumumanList: safeJson(localStorage.getItem('CAPTAIN_CACHED_PENGUMUMAN'), []),
     kruList: Array.isArray(kru) && kru.length ? kru : DEFAULT_KRU.slice(),
     activeCrew: active,
-    clearedTables: parsed.clearedTables || {}
+    clearedTables: parsed.clearedTables || {},
+    openingFloatDefault: Number.isFinite(defFloat) && defFloat >= 0 ? defFloat : 100000
   };
 }
 
@@ -141,7 +190,8 @@ function saveState(immediate = false) {
       const trimA = rawA.length > 100 ? rawA.filter(a => (Number(a.settledAtMs) || 0) >= cut35) : rawA;
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         orders: trimO, piutangAktif: appState.piutangAktif, piutangArsip: trimA,
-        pengeluaran: trimE, clearedTables: appState.clearedTables, activeCrew: appState.activeCrew
+        pengeluaran: trimE, clearedTables: appState.clearedTables, activeCrew: appState.activeCrew,
+        openingFloatDefault: appState.openingFloatDefault
       }));
     } catch (_) {}
   };
@@ -262,7 +312,7 @@ const SyncQueue = {
   outboxCache: [],
   BATCH_SIZE: 5,
   MAX_ATTEMPTS: 8,
-  PIN_ACTIONS: ['CREATE_ORDER', 'UPDATE_STATUS', 'TOGGLE_ITEM_STATUS', 'UPDATE_PAYMENT_METHOD', 'SETTLE_KASBON', 'PARTIAL_SETTLE_KASBON', 'ADD_EXPENSE', 'SETTLEMENT_SHIFT', 'CLEAR_TABLE'],
+  PIN_ACTIONS: ['CREATE_ORDER', 'UPDATE_STATUS', 'TOGGLE_ITEM_STATUS', 'UPDATE_PAYMENT_METHOD', 'SETTLE_KASBON', 'PARTIAL_SETTLE_KASBON', 'ADD_EXPENSE', 'SETTLEMENT_SHIFT', 'CLEAR_TABLE', 'SPLIT_TAB_ITEMS', 'SET_MENU_AVAILABILITY'],
 
   backoffMs(att) { return Math.min(5000 * Math.pow(2, Math.max(0, att - 1)), 300000); },
   _attachAuth(item, overwritePin = false) {
@@ -272,8 +322,9 @@ const SyncQueue = {
     const crew = appState.activeCrew || DEFAULT_KRU[1];
     item.payload.staff = item.payload.staff || crew.nama;
     item.payload.actor = item.payload.actor || crew.nama;
+    const pin = getActiveStaffPin();
     if (SyncQueue.PIN_ACTIONS.includes(act)) {
-      if (crew.pin && (overwritePin || !item.payload.staff_pin)) item.payload.staff_pin = crew.pin;
+      if (pin && (overwritePin || !item.payload.staff_pin)) item.payload.staff_pin = pin;
     }
   },
   async getPending() {
@@ -288,10 +339,31 @@ const SyncQueue = {
     for (const it of all) {
       if (it.status === 'failed' || it.status === 'syncing' || it.permanent || it.nextRetryAt) {
         it.permanent = false; it.nextRetryAt = 0; it.attempts = 0; it.status = 'pending';
-        SyncQueue._attachAuth(it, refreshPin && /pin/i.test(String(it.lastError || '')));
+        SyncQueue._attachAuth(it, Boolean(refreshPin));
         await PosIDB.put('outbox', it);
       }
     }
+  },
+  async rescueWithNewPin(newPin) {
+    const cleanPin = String(newPin || '').trim();
+    if (!cleanPin) return;
+    currentStaffPin = cleanPin;
+    try {
+      localStorage.setItem('CAPTAIN_STAFF_PIN', cleanPin);
+      sessionStorage.setItem('CAPTAIN_STAFF_PIN', cleanPin);
+    } catch (_) {}
+    const all = await PosIDB.getAll('outbox');
+    for (const it of all) {
+      if (!it || !it.payload) continue;
+      it.permanent = false;
+      it.nextRetryAt = 0;
+      it.attempts = 0;
+      if (it.status !== 'syncing') it.status = 'pending';
+      SyncQueue._attachAuth(it, true);
+      await PosIDB.put('outbox', it);
+    }
+    await SyncQueue.updateBadge();
+    if (navigator.onLine) await SyncQueue.flush({ force: true });
   },
   async enqueue(payload) {
     const act = String(payload.action || '').toUpperCase();
@@ -300,7 +372,7 @@ const SyncQueue = {
     const crew = appState.activeCrew || DEFAULT_KRU[1];
     itemPayload.staff = itemPayload.staff || crew.nama;
     itemPayload.actor = itemPayload.actor || crew.nama;
-    itemPayload.staff_pin = itemPayload.staff_pin || crew.pin;
+    itemPayload.staff_pin = itemPayload.staff_pin || getActiveStaffPin();
     if (act === 'UPDATE_STATUS') itemPayload.staleSafe = true;
 
     let merged = false;
@@ -545,6 +617,25 @@ function ordersFp(list) {
   return s;
 }
 
+async function promptServerPinRescue() {
+  if (window._litePinPromptActive) return;
+  window._litePinPromptActive = true;
+  try {
+    const enteredPin = await requestPinModal({
+      title: '🔒 Otorisasi Sinkronisasi Kasir Lite',
+      subtitle: 'Keamanan server aktif (require_get_pin). Masukkan PIN Kru Anda agar data dan antrean Outbox tersinkron:',
+      defaultVal: currentStaffPin || ''
+    });
+    if (enteredPin) {
+      await SyncQueue.rescueWithNewPin(enteredPin);
+      lastDataVersion = 0;
+      await fetchFromServer(true, true);
+    }
+  } finally {
+    window._litePinPromptActive = false;
+  }
+}
+
 async function fetchFromServer(showNotify = false, forceFull = false) {
   if (!SCRIPT_URL || SCRIPT_URL.includes('TEMPEL_URL') || isFetching || !navigator.onLine) return;
   isFetching = true;
@@ -556,10 +647,16 @@ async function fetchFromServer(showNotify = false, forceFull = false) {
     let url = needFull
       ? `${SCRIPT_URL}${sep}full=1&t=${now}`
       : `${SCRIPT_URL}${sep}fast=1${lastDataVersion > 0 ? '&sinceVer=' + lastDataVersion : ''}`;
+    url = appendStaffPinQuery(url);
 
     const res = await fetch(url, { redirect: 'follow', cache: 'no-cache' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (data.status === 'unauthorized') {
+      if (showNotify) showToast('🔒 PIN Kru valid diperlukan untuk sinkronisasi Spreadsheet', 'err');
+      setTimeout(() => { promptServerPinRescue(); }, 0);
+      return;
+    }
     if (data.status !== 'success') throw new Error(data.message || 'Gagal');
     if (data.version) lastServerApiVersion = String(data.version);
     if (Number(data.dataVersion) > 0) lastDataVersion = Number(data.dataVersion);
@@ -571,6 +668,13 @@ async function fetchFromServer(showNotify = false, forceFull = false) {
     }
 
     let changed = Boolean(forceFull || showNotify);
+    if (Number(data.openingFloatDefault) >= 0 && data.openingFloatDefault !== undefined && data.openingFloatDefault !== null) {
+      const srvFloat = Number(data.openingFloatDefault);
+      if (srvFloat !== appState.openingFloatDefault) {
+        appState.openingFloatDefault = srvFloat;
+        changed = true;
+      }
+    }
     if (Number(data.lastSettlementMs) > 0) {
       const curCut = Number(localStorage.getItem('CAPTAIN_SHIFT_CUTOFF_MS')) || 0;
       if (Number(data.lastSettlementMs) > curCut) {
@@ -579,10 +683,31 @@ async function fetchFromServer(showNotify = false, forceFull = false) {
       }
     }
     if (Array.isArray(data.menu) && data.menu.length) {
-      MENU_CATALOG = data.menu.filter(m => m.is_available !== false);
-      try { localStorage.setItem('CAPTAIN_CACHED_MENU', JSON.stringify(MENU_CATALOG)); } catch (_) {}
-      PosIDB.putBulk('menu', MENU_CATALOG);
+      ALL_MENU_CATALOG = data.menu.map(m => Object.assign({}, m, { is_available: m.is_available !== false }));
+      MENU_CATALOG = ALL_MENU_CATALOG.filter(m => m.is_available !== false);
+      try {
+        localStorage.setItem('CAPTAIN_CACHED_ALL_MENU', JSON.stringify(ALL_MENU_CATALOG));
+        localStorage.setItem('CAPTAIN_CACHED_MENU', JSON.stringify(MENU_CATALOG));
+      } catch (_) {}
+      PosIDB.putBulk('menu', ALL_MENU_CATALOG);
       changed = true;
+    } else if (Array.isArray(data.unavailableMenuIds) && ALL_MENU_CATALOG.length) {
+      const offSet = new Set(data.unavailableMenuIds.map(id => String(id)));
+      let stockChanged = false;
+      ALL_MENU_CATALOG = ALL_MENU_CATALOG.map(m => {
+        const nextAvail = !offSet.has(String(m.id));
+        if ((m.is_available !== false) !== nextAvail) stockChanged = true;
+        return Object.assign({}, m, { is_available: nextAvail });
+      });
+      if (stockChanged) {
+        MENU_CATALOG = ALL_MENU_CATALOG.filter(m => m.is_available !== false);
+        try {
+          localStorage.setItem('CAPTAIN_CACHED_ALL_MENU', JSON.stringify(ALL_MENU_CATALOG));
+          localStorage.setItem('CAPTAIN_CACHED_MENU', JSON.stringify(MENU_CATALOG));
+        } catch (_) {}
+        PosIDB.putBulk('menu', ALL_MENU_CATALOG);
+        changed = true;
+      }
     }
     if (Array.isArray(data.tables) && data.tables.length) {
       const nextT = data.tables.filter(t => t && t.name).map(t => ({
@@ -687,8 +812,13 @@ async function fetchFromServer(showNotify = false, forceFull = false) {
     if (Array.isArray(data.kru) && data.kru.length) {
       appState.kruList = data.kru;
       try { localStorage.setItem('CAPTAIN_CACHED_KRU', JSON.stringify(data.kru)); } catch (_) {}
-      const m = data.kru.find(k => k.id === appState.activeCrew?.id);
-      if (m) { appState.activeCrew = m; localStorage.setItem('CAPTAIN_ACTIVE_CREW', JSON.stringify(m)); }
+      const activePin = String(currentStaffPin || '').trim();
+      const matchedByPin = activePin ? data.kru.find(k => String(k.pin || '').trim() === activePin) : null;
+      const m = matchedByPin || data.kru.find(k => k.id === appState.activeCrew?.id) || data.kru.find(k => String(k.peran || '').toLowerCase().includes('kasir')) || data.kru[0];
+      if (m) {
+        appState.activeCrew = m;
+        localStorage.setItem('CAPTAIN_ACTIVE_CREW', JSON.stringify(m));
+      }
       updateCrewUI();
     }
     if (Array.isArray(data.settlements)) {
@@ -726,7 +856,7 @@ async function loadArchiveFromServer(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Memuat...'; }
   try {
     const sep = SCRIPT_URL.includes('?') ? '&' : '?';
-    const res = await fetch(`${SCRIPT_URL}${sep}action=GET_ARCHIVE_HISTORY&t=${Date.now()}`, { redirect: 'follow', cache: 'no-cache' });
+    const res = await fetch(appendStaffPinQuery(`${SCRIPT_URL}${sep}action=GET_ARCHIVE_HISTORY&t=${Date.now()}`), { redirect: 'follow', cache: 'no-cache' });
     const data = await res.json();
     if (data.status !== 'success') throw new Error(data.message || 'Gagal');
     let addO = 0, addE = 0;
@@ -777,15 +907,37 @@ const ShiftEngine = {
     return op.getTime();
   },
   setCutoff(ms) { localStorage.setItem('CAPTAIN_SHIFT_CUTOFF_MS', String(ms)); },
+  getOpeningFloat() {
+    try {
+      const ov = localStorage.getItem('CAPTAIN_SHIFT_FLOAT_OVERRIDE');
+      if (ov !== null && ov !== '') {
+        const parsedOv = Number(ov);
+        if (Number.isFinite(parsedOv) && parsedOv >= 0) return parsedOv;
+      }
+    } catch (_) {}
+    const def = Number(appState?.openingFloatDefault);
+    return Number.isFinite(def) && def >= 0 ? def : 100000;
+  },
+  setOpeningFloatOverride(amt) {
+    const val = Math.max(0, Math.round(Number(amt) || 0));
+    try { localStorage.setItem('CAPTAIN_SHIFT_FLOAT_OVERRIDE', String(val)); } catch (_) {}
+    return val;
+  },
+  clearOpeningFloatOverride() {
+    try { localStorage.removeItem('CAPTAIN_SHIFT_FLOAT_OVERRIDE'); } catch (_) {}
+  },
   inShift(rec) {
     const cut = this.getCutoff();
     if (rec.settledAtMs && Number(rec.settledAtMs) >= cut) return true;
     return parseTsMs(rec.timestamp, rec.createdAtMs) >= cut;
   },
   /** Satu sumber perhitungan (dipakai kartu Tutup Shift, popup Detail, dan snapshot Settlement). */
-  breakdown(fromMs, toMs = Infinity) {
+  breakdown(fromMs, toMs = Infinity, explicitFloat = undefined) {
     const cut = Number(fromMs) || 0;
     const end = Number.isFinite(toMs) ? Number(toMs) : Infinity;
+    const openingFloat = (explicitFloat !== undefined && explicitFloat !== null)
+      ? Math.max(0, Number(explicitFloat) || 0)
+      : this.getOpeningFloat();
     let cashSales = 0, qrisOnly = 0, transferOnly = 0, shiftKasbon = 0;
     const sales = [], expenses = [], kasbon = [];
 
@@ -862,10 +1014,11 @@ const ShiftEngine = {
 
     return {
       cutoff: cut, endMs: end,
+      openingFloat,
       cashSales, qrisOnly, transferOnly, nonCashSales,
       totalRevenue: cashSales + nonCashSales,
       cashExp, nonCashExp, totalExp: cashExp + nonCashExp,
-      shiftKasbon, targetCash: cashSales - cashExp,
+      shiftKasbon, targetCash: openingFloat + cashSales - cashExp,
       sales, expenses, kasbon
     };
   },
@@ -877,7 +1030,8 @@ const ShiftEngine = {
     const MAX_S = 300, MAX_E = 150, MAX_K = 100;
     let truncated = (bd.sales.length > MAX_S) || (bd.expenses.length > MAX_E) || (bd.kasbon.length > MAX_K);
     const snap = {
-      v: 1, fromMs: Number(fromMs) || 0, toMs: Number(toMs) || Date.now(),
+      v: 2, fromMs: Number(fromMs) || 0, toMs: Number(toMs) || Date.now(),
+      openingFloat: Number(bd.openingFloat) || 0,
       sales: bd.sales.slice(0, MAX_S).map(stripSale),
       expenses: bd.expenses.slice(0, MAX_E).map(stripExp),
       kasbon: bd.kasbon.slice(0, MAX_K).map(stripKb),
@@ -1753,12 +1907,48 @@ function openSettlementModal() {
   const m = ShiftEngine.metrics();
   setText('stOmzet', formatRupiah(m.totalRevenue));
   setText('stSplit', `${formatRupiah(m.cashSales)} / ${formatRupiah(m.nonCashSales)}`);
+  setText('stOpeningFloat', formatRupiah(m.openingFloat));
   setText('stTarget', formatRupiah(m.targetCash));
   document.getElementById('stActual').value = m.targetCash;
   document.getElementById('stNote').value = '';
   calcSettleDiff();
   renderSettlementHistory();
   openModal('modalSettlement');
+}
+async function promptEditOpeningFloatLite() {
+  const crew = appState.activeCrew || DEFAULT_KRU[1];
+  const roleStr = String(crew.peran || '').toLowerCase();
+  const isSup = roleStr.includes('supervisor') || roleStr.includes('owner') || roleStr.includes('manager');
+  if (!isSup) {
+    const pin = await requestPinModal({
+      title: '🔒 Otorisasi Modal Awal Laci',
+      subtitle: 'Ubah modal awal shift sementara membutuhkan PIN Supervisor / Owner:'
+    });
+    if (!pin) return;
+    const sups = (appState.kruList || DEFAULT_KRU).filter(k => /supervisor|owner|manager/i.test(String(k.peran || '')));
+    if (sups.length && !sups.some(s => String(s.pin).trim() === String(pin).trim())) {
+      return showToast('❌ PIN Supervisor salah', 'err');
+    }
+  }
+  const rawVal = await requestPinModal({
+    title: '💵 Ubah Modal Awal Laci Shift',
+    subtitle: 'Masukkan nominal Modal Awal Laci (Rp) untuk shift aktif ini:',
+    defaultVal: ShiftEngine.getOpeningFloat(),
+    inputType: 'number',
+    placeholder: '100000'
+  });
+  if (rawVal === null || rawVal === '') return;
+  const num = Number(rawVal);
+  if (!Number.isFinite(num) || num < 0) return showToast('Nominal modal awal tidak valid', 'err');
+  ShiftEngine.setOpeningFloatOverride(num);
+  const m = ShiftEngine.metrics();
+  setText('stOpeningFloat', formatRupiah(m.openingFloat));
+  setText('stTarget', formatRupiah(m.targetCash));
+  const actInp = document.getElementById('stActual');
+  if (actInp) actInp.value = m.targetCash;
+  calcSettleDiff();
+  renderKpis();
+  showToast(`✓ Modal awal laci disesuaikan: ${formatRupiah(m.openingFloat)}`, 'ok');
 }
 function switchSettleTab(t) {
   document.getElementById('stTabForm').classList.toggle('active', t === 'form');
@@ -1793,6 +1983,7 @@ function confirmSettlement() {
     shiftEndStr: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
     shiftStartMs: bd.cutoff,
     shiftEndMs: nowMs,
+    openingFloat: bd.openingFloat,
     totalRevenue: bd.totalRevenue, cashSales: bd.cashSales, qrisSales: bd.nonCashSales,
     cashExpense: bd.cashExp, qrisExpense: bd.nonCashExp, totalExpense: bd.totalExp,
     shiftKasbon: bd.shiftKasbon, targetCash: bd.targetCash, actualCash: actual,
@@ -1807,6 +1998,7 @@ function confirmSettlement() {
     try { localStorage.setItem('CAPTAIN_SETTLEMENT_HISTORY', JSON.stringify(slim)); } catch (_) {}
   }
   ShiftEngine.setCutoff(nowMs);
+  ShiftEngine.clearOpeningFloatOverride();
   SyncQueue.enqueue(Object.assign({ action: 'SETTLEMENT_SHIFT', detailJson: JSON.stringify(snapshot) }, baseRec));
   Printer.printSettlement(baseRec);
   closeModal('modalSettlement');
@@ -1879,7 +2071,7 @@ function cacheSettlementDetailLocally(settlementId, detailObj) {
 async function fetchSettlementDetailFromServer(settlementId) {
   if (!SCRIPT_URL || SCRIPT_URL.includes('TEMPEL_URL') || !navigator.onLine) return null;
   const sep = SCRIPT_URL.includes('?') ? '&' : '?';
-  const url = `${SCRIPT_URL}${sep}action=SETTLEMENT_DETAIL&settlementId=${encodeURIComponent(settlementId)}&t=${Date.now()}`;
+  const url = appendStaffPinQuery(`${SCRIPT_URL}${sep}action=SETTLEMENT_DETAIL&settlementId=${encodeURIComponent(settlementId)}&t=${Date.now()}`);
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 12000);
   try {
@@ -1910,7 +2102,12 @@ function buildContextFromDetail(rec, detail, sourceKind, extraNote) {
   });
   const reconNonCash = reconQris + reconTrf;
   const reconRev = reconCash + reconNonCash;
-  const reconTarget = reconCash - reconCashExp;
+  const reconFloat = rec.openingFloat != null
+    ? Number(rec.openingFloat)
+    : (detail && detail.openingFloat != null
+      ? Number(detail.openingFloat)
+      : Math.max(0, (Number(rec.targetCash) || 0) - reconCash + reconCashExp));
+  const reconTarget = reconFloat + reconCash - reconCashExp;
 
   let mismatch = null;
   if (sourceKind === 'reconstruct') {
@@ -1924,8 +2121,8 @@ function buildContextFromDetail(rec, detail, sourceKind, extraNote) {
   }
 
   return {
-    rec, sourceKind, extraNote: extraNote || '',
-    sales, expenses, kasbon,
+    rec: Object.assign({ openingFloat: reconFloat }, rec), sourceKind, extraNote: extraNote || '',
+    sales, expenses, kasbon, openingFloat: reconFloat,
     qrisOnly: reconQris, transferOnly: reconTrf,
     truncated: !!detail.truncated,
     mismatch
@@ -1947,6 +2144,7 @@ async function openSettlementDetail(mode, idx) {
       staffName: appState.activeCrew?.nama || 'Kasir',
       shiftStartStr: `${pad2(startD.getHours())}:${pad2(startD.getMinutes())}`,
       shiftEndStr: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
+      openingFloat: bd.openingFloat,
       totalRevenue: bd.totalRevenue, cashSales: bd.cashSales, qrisSales: bd.nonCashSales,
       cashExpense: bd.cashExp, qrisExpense: bd.nonCashExp, totalExpense: bd.totalExp,
       shiftKasbon: bd.shiftKasbon, targetCash: bd.targetCash, actualCash,
@@ -2088,10 +2286,10 @@ function renderSettleDetailBody() {
         ${nonCashSub}
       </div>
       <div class="sd-formula">
-        <div class="sd-formula-title"><span>2. Target Kas Laci</span><span>Tunai − Keluar Laci</span></div>
+        <div class="sd-formula-title"><span>2. Target Kas Laci</span><span>Modal Awal + Tunai − Keluar Laci</span></div>
         <div class="sd-formula-eq">
           <span class="sd-formula-val mono">${formatRupiah(r.targetCash)}</span>
-          <span class="sd-formula-expr mono">${formatRupiah(r.cashSales)} − ${formatRupiah(r.cashExpense)}</span>
+          <span class="sd-formula-expr mono">${formatRupiah(ctx.openingFloat ?? r.openingFloat ?? 0)} + ${formatRupiah(r.cashSales)} − ${formatRupiah(r.cashExpense)}</span>
         </div>
         ${nonCashExpLine}
       </div>
@@ -2325,15 +2523,22 @@ function openCrewModal() {
   `).join('');
   openModal('modalCrew');
 }
-function selectCrew(id) {
+async function selectCrew(id) {
   const target = (appState.kruList || DEFAULT_KRU).find(k => k.id === id); if (!target) return;
-  const pin = prompt(`Masukkan PIN untuk ${target.nama}:`);
-  if (!pin || pin.trim() !== String(target.pin).trim()) return showToast('PIN salah', 'err');
+  const pin = await requestPinModal({
+    title: `👤 Ganti Kru: ${target.nama}`,
+    subtitle: `Masukkan PIN untuk ${target.nama} (${target.peran}):`
+  });
+  if (!pin || pin.trim() !== String(target.pin).trim()) {
+    if (pin !== null) showToast('PIN salah', 'err');
+    return;
+  }
   appState.activeCrew = target;
   localStorage.setItem('CAPTAIN_ACTIVE_CREW', JSON.stringify(target));
-  localStorage.setItem('CAPTAIN_STAFF_PIN', target.pin);
   updateCrewUI(); closeModal('modalCrew');
+  await SyncQueue.rescueWithNewPin(target.pin);
   showToast(`Kru aktif: ${target.nama}`, 'ok');
+  fetchFromServer(false, true);
 }
 
 // UI SCALE (Sedang / Besar — Ramah Mata Minus)
@@ -2360,6 +2565,8 @@ function toggleUiScale() {
 function openSettingsModal() {
   const pc = Printer.getCfg();
   document.getElementById('setGasUrl').value = SCRIPT_URL;
+  const pinInp = document.getElementById('setStaffPin');
+  if (pinInp) pinInp.value = currentStaffPin || '';
   document.getElementById('setPollSec').value = POLL_INTERVAL_SEC;
   document.getElementById('setPaperWidth').value = pc.paperWidth;
   const selScale = document.getElementById('setUiScale');
@@ -2373,8 +2580,10 @@ function openSettingsModal() {
   document.getElementById('setShowLogo').checked = pc.showLogo;
   openModal('modalSettings');
 }
-function saveSettingsModal() {
+async function saveSettingsModal() {
   SCRIPT_URL = document.getElementById('setGasUrl').value.trim() || DEFAULT_SCRIPT_URL;
+  const enteredPin = (document.getElementById('setStaffPin')?.value || '').trim();
+  const prevPin = currentStaffPin;
   POLL_INTERVAL_SEC = Math.max(3, Math.min(60, Number(document.getElementById('setPollSec').value) || 5));
   localStorage.setItem('CAPTAIN_GAS_URL', SCRIPT_URL);
   localStorage.setItem('CAPTAIN_POLL_SEC', String(POLL_INTERVAL_SEC));
@@ -2392,7 +2601,12 @@ function saveSettingsModal() {
   });
   startPollLoop();
   closeModal('modalSettings');
-  showToast('Pengaturan disimpan', 'ok');
+  if (enteredPin) {
+    await SyncQueue.rescueWithNewPin(enteredPin);
+    if (enteredPin !== prevPin) showToast('✓ PIN Kru diperbarui & antrean disinkronkan!', 'ok');
+  } else {
+    showToast('Pengaturan disimpan', 'ok');
+  }
   manualRefresh();
 }
 
@@ -2572,7 +2786,9 @@ const Printer = {
   },
   async printSettlement(r) {
     const pad = '     ';
+    const modalAwalVal = Number(r.openingFloat ?? ShiftEngine.getOpeningFloat()) || 0;
     const txt = `\n${pad}=== SETTLEMENT SHIFT ===\n${pad}${r.shiftDateStr}\n${pad}Petugas: ${r.staffName}\n${pad}------------------------\n`
+      + `${pad}ModalAwl: ${formatRupiah(modalAwalVal)}\n`
       + `${pad}Omzet   : ${formatRupiah(r.totalRevenue)}\n${pad}Tunai   : ${formatRupiah(r.cashSales)}\n${pad}NonTunai: ${formatRupiah(r.qrisSales)}\n`
       + `${pad}Keluar  : ${formatRupiah(r.cashExpense)}\n${pad}Target  : ${formatRupiah(r.targetCash)}\n${pad}Fisik   : ${formatRupiah(r.actualCash)}\n`
       + `${pad}Selisih : ${formatRupiah(r.diff)}\n${pad}Cat     : ${r.note || '-'}\n\n\n\n`;
@@ -2598,6 +2814,7 @@ const Printer = {
       `${pad}Petugas: ${r.staffName || 'Kasir'} (${shiftSpan})\n`,
       `${pad}Sumber : ${srcLabel}\n`,
       div,
+      `${pad}ModalAwl: ${formatRupiah(ctx.openingFloat ?? r.openingFloat ?? 0)}\n`,
       `${pad}Omzet   : ${formatRupiah(r.totalRevenue)}\n`,
       `${pad}  Tunai : ${formatRupiah(r.cashSales)}\n`,
       `${pad}  NonTun: ${formatRupiah(r.qrisSales)}\n`,
@@ -2724,7 +2941,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   await PosIDB.init();
-  const idbMenu = await PosIDB.getAll('menu'); if (idbMenu.length) MENU_CATALOG = idbMenu.filter(m => m.is_available !== false);
+  const idbMenu = await PosIDB.getAll('menu');
+  if (idbMenu.length) {
+    ALL_MENU_CATALOG = idbMenu.map(m => Object.assign({}, m, { is_available: m.is_available !== false }));
+    MENU_CATALOG = ALL_MENU_CATALOG.filter(m => m.is_available !== false);
+  }
   const idbOrd = await PosIDB.getAll('orders'); if (idbOrd.length) appState.orders = idbOrd;
   const idbKb = await PosIDB.getAll('piutang_aktif'); if (idbKb.length) appState.piutangAktif = idbKb;
 

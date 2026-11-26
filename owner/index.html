@@ -196,6 +196,10 @@
             <label class="kpi-label" style="display:block;margin-bottom:4px">URL Web App (/exec)</label>
             <input id="cfgGasUrl" class="input mono" style="width:100%" />
           </div>
+          <div>
+            <label class="kpi-label" style="display:block;margin-bottom:4px">PIN Akses Sinkronisasi (Supervisor / Kru)</label>
+            <input id="cfgOwnerPin" type="password" inputmode="numeric" class="input mono" style="width:100%" placeholder="Masukkan PIN Supervisor / Kru untuk akses data..." />
+          </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-primary" onclick="saveOwnerConfig()">💾 Simpan & Muat Ulang</button>
             <button class="btn" onclick="resetOwnerUrl()">Reset URL Default</button>
@@ -205,6 +209,18 @@
       </div>
     </section>
   </main>
+
+  <div id="ownerPinModal" class="hidden" style="position:fixed;inset:0;z-index:90;background:rgba(15,23,42,0.68);display:flex;align-items:center;justify-content:center;padding:16px">
+    <div class="card" style="width:100%;max-width:400px;background:#fff;box-shadow:0 20px 40px rgba(15,23,42,0.28)">
+      <h3 style="margin:0 0 6px 0">🔒 Otorisasi Dashboard Owner</h3>
+      <p class="muted" style="margin:0 0 10px 0;font-size:13px">Keamanan API aktif (`require_get_pin = TRUE`). Masukkan PIN Supervisor / Kru yang aktif:</p>
+      <input id="ownerPinModalInput" type="password" inputmode="numeric" class="input mono" style="width:100%;margin-bottom:12px" placeholder="Masukkan PIN..." onkeydown="if(event.key==='Enter')submitOwnerPinModal()" />
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" class="btn btn-primary" onclick="submitOwnerPinModal()">Simpan &amp; Muat Ulang</button>
+        <button type="button" class="btn" onclick="closeOwnerPinModal()">Batal</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toastHost"></div>
   <script src="app.js"></script>

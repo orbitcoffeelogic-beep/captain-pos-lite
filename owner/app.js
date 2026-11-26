@@ -1,10 +1,12 @@
 /* CAPTAIN COFFEE — OWNER DASHBOARD & AUDIT ENGINE (v1.0-owner) */
 'use strict';
 
-const OWNER_VERSION = 'v1.0-owner';
+const OWNER_VERSION = 'v1.1-owner';
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLa2QzC2FMgCYWOeroreDWTaXFY8UR9dTikqaohMEFKD8KZMfjiFhNy_ywnxZaV_A6/exec';
 
 let SCRIPT_URL = localStorage.getItem('CAPTAIN_GAS_URL') || DEFAULT_SCRIPT_URL;
+let ownerPin = localStorage.getItem('CAPTAIN_OWNER_PIN') || localStorage.getItem('CAPTAIN_STAFF_PIN') || '';
+let _ownerPinModalPrompted = false;
 let currentTab = 'overview';
 let lastDataVersion = 0;
 let lastServerApiVersion = '-';
@@ -178,6 +180,40 @@ function computeActiveShiftMetrics() {
   return { cutoff: cut, cashSales, nonCashSales, totalRevenue: cashSales + nonCashSales };
 }
 
+function appendOwnerPinQuery(url) {
+  const p = String(ownerPin || '').trim();
+  if (!p || /[?&](staff_pin|pin)=/i.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}staff_pin=${encodeURIComponent(p)}`;
+}
+
+function openOwnerPinModal() {
+  const m = document.getElementById('ownerPinModal');
+  const inp = document.getElementById('ownerPinModalInput');
+  if (m) m.classList.remove('hidden');
+  if (inp) {
+    inp.value = ownerPin || '';
+    setTimeout(() => { try { inp.focus(); inp.select(); } catch (_) {} }, 20);
+  }
+}
+
+function closeOwnerPinModal() {
+  const m = document.getElementById('ownerPinModal');
+  if (m) m.classList.add('hidden');
+}
+
+function submitOwnerPinModal() {
+  const inp = document.getElementById('ownerPinModalInput');
+  const val = String(inp?.value || '').trim();
+  if (!val) return showToast('Masukkan PIN terlebih dahulu', 'err');
+  ownerPin = val;
+  try { localStorage.setItem('CAPTAIN_OWNER_PIN', ownerPin); } catch (_) {}
+  _ownerPinModalPrompted = false;
+  closeOwnerPinModal();
+  const cfgPin = document.getElementById('cfgOwnerPin');
+  if (cfgPin) cfgPin.value = ownerPin;
+  refreshAll(true);
+}
+
 // ============================================================================
 // CLOUD FETCH (FULL + sinceVer FAST POLL)
 // ============================================================================
@@ -195,12 +231,22 @@ async function fetchCloud(isFull = false, showNotify = false) {
       ? `${SCRIPT_URL}${sep}full=1&t=${Date.now()}`
       : `${SCRIPT_URL}${sep}fast=1&t=${Date.now()}`;
     if (!isFull && lastDataVersion > 0) url += `&sinceVer=${lastDataVersion}`;
+    url = appendOwnerPinQuery(url);
 
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), isFull ? 25000 : 14000);
     const res = await fetch(url, { redirect: 'follow', cache: 'no-cache', signal: ctrl.signal });
     clearTimeout(tid);
     const data = await res.json();
+    if (data.status === 'unauthorized') {
+      setSyncStatus('Butuh PIN', '#f59e0b');
+      if (showNotify) showToast(data.message || 'PIN Supervisor / Kru diperlukan untuk sinkronisasi', 'err');
+      if (!_ownerPinModalPrompted) {
+        _ownerPinModalPrompted = true;
+        openOwnerPinModal();
+      }
+      return;
+    }
     if (data.status !== 'success') throw new Error(data.message || 'Gagal memuat data');
 
     if (data.version) lastServerApiVersion = String(data.version);
@@ -264,7 +310,7 @@ async function loadArchive(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Memuat Arsip...'; }
   try {
     const sep = SCRIPT_URL.includes('?') ? '&' : '?';
-    const res = await fetch(`${SCRIPT_URL}${sep}action=GET_ARCHIVE_HISTORY&t=${Date.now()}`, { redirect: 'follow', cache: 'no-cache' });
+    const res = await fetch(appendOwnerPinQuery(`${SCRIPT_URL}${sep}action=GET_ARCHIVE_HISTORY&t=${Date.now()}`), { redirect: 'follow', cache: 'no-cache' });
     const data = await res.json();
     if (data.status !== 'success') throw new Error(data.message || 'Gagal memuat arsip');
 
@@ -755,6 +801,8 @@ async function loadAuditData() {
     const res = await fetch(url, { redirect: 'follow', cache: 'no-cache' });
     const data = await res.json();
     if (data.status !== 'success') throw new Error(data.message || 'PIN ditolak atau gagal memuat audit');
+    ownerPin = pin;
+    try { localStorage.setItem('CAPTAIN_OWNER_PIN', ownerPin); } catch (_) {}
 
     ownerState.auditLog = Array.isArray(data.auditLog) ? data.auditLog : [];
     if (Array.isArray(data.settlements)) ownerState.settlements = data.settlements;
@@ -851,6 +899,8 @@ function exportSettlementCsv() {
 function updateConfigDiag() {
   const input = document.getElementById('cfgGasUrl');
   if (input && document.activeElement !== input) input.value = SCRIPT_URL;
+  const pinInput = document.getElementById('cfgOwnerPin');
+  if (pinInput && document.activeElement !== pinInput) pinInput.value = ownerPin || '';
   const diag = document.getElementById('cfgDiag');
   if (diag) {
     diag.textContent = `App ${OWNER_VERSION} | API v${lastServerApiVersion} | DataVer ${lastDataVersion || '-'} | Order: ${ownerState.orders.length} | Pengeluaran: ${ownerState.pengeluaran.length} | Kasbon: ${ownerState.kasbon.length} | Arsip: ${ownerState.archiveLoaded ? 'Termuat' : '35h aktif'} | Sync: ${lastSyncText}`;
@@ -863,10 +913,16 @@ function saveOwnerConfig() {
     showToast('URL Web App harus diawali https://', 'err');
     return;
   }
+  const newPin = (document.getElementById('cfgOwnerPin')?.value || '').trim();
   SCRIPT_URL = url;
   localStorage.setItem('CAPTAIN_GAS_URL', url);
+  if (newPin) {
+    ownerPin = newPin;
+    try { localStorage.setItem('CAPTAIN_OWNER_PIN', ownerPin); } catch (_) {}
+    _ownerPinModalPrompted = false;
+  }
   lastDataVersion = 0;
-  showToast('✓ URL disimpan, memuat ulang data...', 'ok');
+  showToast('✓ Pengaturan disimpan, memuat ulang data...', 'ok');
   fetchCloud(true, true);
 }
 
