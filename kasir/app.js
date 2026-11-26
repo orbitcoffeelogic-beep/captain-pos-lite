@@ -1,7 +1,7 @@
 /* CAPTAIN POS LITE (v1.0-lite) — Ultra-Fast Cashier, Radar & KDS Engine for Older Android Tablets */
 'use strict';
 
-const APP_VERSION = 'v1.1-lite';
+const APP_VERSION = 'v1.2-lite';
 const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzLa2QzC2FMgCYWOeroreDWTaXFY8UR9dTikqaohMEFKD8KZMfjiFhNy_ywnxZaV_A6/exec';
 const STORAGE_KEY = 'CAPTAIN_COFFEE_OPS_STATE_V1';
 
@@ -205,39 +205,93 @@ function saveState(immediate = false) {
 // ============================================================================
 const PosIDB = {
   db: null,
-  init() {
+  OUTBOX_LS_KEY: 'CAPTAIN_LITE_OUTBOX_LS',
+  _readLsOutbox() {
+    const raw = safeJson(localStorage.getItem(PosIDB.OUTBOX_LS_KEY), []);
+    return Array.isArray(raw) ? raw : [];
+  },
+  _writeLsOutbox(list) {
+    try { localStorage.setItem(PosIDB.OUTBOX_LS_KEY, JSON.stringify(list || [])); } catch (_) {}
+  },
+  _ensureStores(db) {
+    if (!db.objectStoreNames.contains('orders')) db.createObjectStore('orders', { keyPath: 'orderId' });
+    if (!db.objectStoreNames.contains('outbox')) {
+      const ob = db.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
+      if (ob && typeof ob.createIndex === 'function') {
+        ob.createIndex('status', 'status', { unique: false });
+        ob.createIndex('orderId', 'orderId', { unique: false });
+      }
+    }
+    if (!db.objectStoreNames.contains('menu')) db.createObjectStore('menu', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('piutang_aktif')) db.createObjectStore('piutang_aktif', { keyPath: 'order_id' });
+    if (!db.objectStoreNames.contains('piutang_arsip')) db.createObjectStore('piutang_arsip', { keyPath: 'order_id' });
+    if (!db.objectStoreNames.contains('app_meta')) db.createObjectStore('app_meta', { keyPath: 'key' });
+    if (!db.objectStoreNames.contains('privileges')) db.createObjectStore('privileges', { keyPath: 'id' });
+  },
+  _openWithRetry(versionNum) {
     return new Promise((resolve) => {
-      if (!window.indexedDB) return resolve(null);
-      const req = indexedDB.open('captain_pos_db', 1);
-      req.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains('orders')) db.createObjectStore('orders', { keyPath: 'orderId' });
-        if (!db.objectStoreNames.contains('outbox')) {
-          const ob = db.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
-          ob.createIndex('status', 'status', { unique: false });
-          ob.createIndex('orderId', 'orderId', { unique: false });
-        }
-        if (!db.objectStoreNames.contains('menu')) db.createObjectStore('menu', { keyPath: 'id' });
-        if (!db.objectStoreNames.contains('piutang_aktif')) db.createObjectStore('piutang_aktif', { keyPath: 'order_id' });
-        if (!db.objectStoreNames.contains('piutang_arsip')) db.createObjectStore('piutang_arsip', { keyPath: 'order_id' });
-        if (!db.objectStoreNames.contains('app_meta')) db.createObjectStore('app_meta', { keyPath: 'key' });
-      };
-      req.onsuccess = (e) => { PosIDB.db = e.target.result; resolve(PosIDB.db); };
-      req.onerror = () => resolve(null);
+      try {
+        const req = versionNum ? indexedDB.open('captain_pos_db', versionNum) : indexedDB.open('captain_pos_db');
+        req.onupgradeneeded = (e) => { PosIDB._ensureStores(e.target.result); };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
     });
   },
+  async _migrateLsOutboxToIdb() {
+    if (!PosIDB.db) return;
+    const lsItems = PosIDB._readLsOutbox();
+    if (!lsItems.length) return;
+    for (const item of lsItems) {
+      if (!item) continue;
+      const copy = Object.assign({}, item);
+      delete copy.id;
+      await new Promise((resolve) => {
+        try {
+          const r = PosIDB.db.transaction('outbox', 'readwrite').objectStore('outbox').put(copy);
+          r.onsuccess = () => resolve(true);
+          r.onerror = () => resolve(false);
+        } catch (_) { resolve(false); }
+      });
+    }
+    PosIDB._writeLsOutbox([]);
+  },
+  async init() {
+    if (!window.indexedDB) return null;
+    // Gunakan versi 2 (sama dengan POS v6.0) dan fallback ke versionless open jika browser sudah di versi >2
+    let db = await PosIDB._openWithRetry(2);
+    if (!db) db = await PosIDB._openWithRetry(undefined);
+    PosIDB.db = db || null;
+    if (PosIDB.db) await PosIDB._migrateLsOutboxToIdb();
+    return PosIDB.db;
+  },
   getAll(store) {
-    if (!PosIDB.db) return Promise.resolve([]);
+    if (!PosIDB.db) {
+      return Promise.resolve(store === 'outbox' ? PosIDB._readLsOutbox() : []);
+    }
     return new Promise((resolve) => {
       try {
         const r = PosIDB.db.transaction(store, 'readonly').objectStore(store).getAll();
         r.onsuccess = () => resolve(r.result || []);
-        r.onerror = () => resolve([]);
-      } catch (_) { resolve([]); }
+        r.onerror = () => resolve(store === 'outbox' ? PosIDB._readLsOutbox() : []);
+      } catch (_) { resolve(store === 'outbox' ? PosIDB._readLsOutbox() : []); }
     });
   },
   put(store, val) {
-    if (!PosIDB.db) return Promise.resolve(null);
+    if (!PosIDB.db) {
+      if (store !== 'outbox' || !val) return Promise.resolve(null);
+      const list = PosIDB._readLsOutbox();
+      const copy = Object.assign({}, val);
+      if (!copy.id) {
+        copy.id = Math.max(Date.now(), ...list.map(x => Number(x.id) || 0)) + 1;
+      }
+      const idx = list.findIndex(x => String(x.id) === String(copy.id));
+      if (idx >= 0) list[idx] = copy; else list.push(copy);
+      PosIDB._writeLsOutbox(list);
+      return Promise.resolve(copy.id);
+    }
     return new Promise((resolve) => {
       try {
         const r = PosIDB.db.transaction(store, 'readwrite').objectStore(store).put(val);
@@ -259,7 +313,12 @@ const PosIDB = {
     });
   },
   delete(store, key) {
-    if (!PosIDB.db) return Promise.resolve(false);
+    if (!PosIDB.db) {
+      if (store !== 'outbox') return Promise.resolve(false);
+      const next = PosIDB._readLsOutbox().filter(x => String(x.id) !== String(key));
+      PosIDB._writeLsOutbox(next);
+      return Promise.resolve(true);
+    }
     return new Promise((resolve) => {
       try {
         const r = PosIDB.db.transaction(store, 'readwrite').objectStore(store).delete(key);
@@ -269,7 +328,10 @@ const PosIDB = {
     });
   },
   clear(store) {
-    if (!PosIDB.db) return Promise.resolve(false);
+    if (!PosIDB.db) {
+      if (store === 'outbox') PosIDB._writeLsOutbox([]);
+      return Promise.resolve(store === 'outbox');
+    }
     return new Promise((resolve) => {
       try {
         const r = PosIDB.db.transaction(store, 'readwrite').objectStore(store).clear();
@@ -344,6 +406,91 @@ const SyncQueue = {
       }
     }
   },
+  async recoverPendingFromAppState() {
+    const existing = await PosIDB.getAll('outbox');
+    const queuedOrderIds = new Set(existing.map(x => String(x.orderId || x.payload?.orderId || '')).filter(Boolean));
+    const queuedExpIds = new Set(
+      existing.filter(x => String(x.action || '').toUpperCase() === 'ADD_EXPENSE')
+        .map(x => String(x.payload?.id || '')).filter(Boolean)
+    );
+    const crew = appState.activeCrew || DEFAULT_KRU[1];
+    const pin = getActiveStaffPin();
+    let recovered = 0;
+
+    for (const o of (appState.orders || [])) {
+      if (!o || !o.orderId || o.syncStatus !== 'pending' || queuedOrderIds.has(o.orderId)) continue;
+      if (o.source !== 'SHEETS') {
+        const items = Array.isArray(o.items) ? o.items : [];
+        const summary = items.map(it => `${it.qty}x ${it.name}${it.note ? ' (' + it.note + ')' : ''}`).join(', ') || '-';
+        const payload = {
+          action: 'CREATE_ORDER',
+          orderId: o.orderId,
+          meja: o.location || 'Meja 01',
+          nama: o.customerName || 'Pelanggan',
+          rincian: summary,
+          catatan: o.paymentStatus === 'OPEN TAB' ? '[OPEN TAB]' : '-',
+          subtotal: Number(o.totalPrice) || 0,
+          diskon: 0,
+          total: Number(o.totalPrice) || 0,
+          metodeBayar: o.paymentMethod || 'Tunai',
+          status: o.status || 'DIPROSES',
+          settledAtMs: Number(o.settledAtMs) || 0,
+          items_json: JSON.stringify(items),
+          staff: crew.nama,
+          actor: crew.nama,
+          staff_pin: pin
+        };
+        await PosIDB.put('outbox', {
+          action: 'CREATE_ORDER', payload, orderId: o.orderId, status: 'pending',
+          attempts: 0, createdAt: Number(o.createdAtMs) || Date.now(), lastError: null
+        });
+      } else {
+        const payload = {
+          action: 'UPDATE_STATUS',
+          orderId: o.orderId,
+          newStatus: o.status,
+          metodeBayar: o.paymentMethod,
+          settledAtMs: Number(o.settledAtMs) || 0,
+          items_json: JSON.stringify(o.items || []),
+          staleSafe: true,
+          staff: crew.nama,
+          actor: crew.nama,
+          staff_pin: pin
+        };
+        await PosIDB.put('outbox', {
+          action: 'UPDATE_STATUS', payload, orderId: o.orderId, status: 'pending',
+          attempts: 0, createdAt: Number(o.lastModifiedAtMs || o.createdAtMs) || Date.now(), lastError: null
+        });
+      }
+      queuedOrderIds.add(o.orderId);
+      recovered++;
+    }
+
+    for (const e of (appState.pengeluaran || [])) {
+      if (!e || !e.id || e.syncStatus !== 'pending' || queuedExpIds.has(e.id)) continue;
+      const payload = {
+        action: 'ADD_EXPENSE',
+        id: e.id,
+        kategori: e.kategori || 'Operasional',
+        keterangan: e.keterangan || '-',
+        nominal: Number(e.nominal) || 0,
+        sumberDana: e.sumberDana || 'Kas Tunai (Laci)',
+        staff: e.staff || crew.nama,
+        catatan: e.catatan || '-',
+        actor: crew.nama,
+        staff_pin: pin
+      };
+      await PosIDB.put('outbox', {
+        action: 'ADD_EXPENSE', payload, orderId: '', status: 'pending',
+        attempts: 0, createdAt: Number(e.createdAtMs) || Date.now(), lastError: null
+      });
+      queuedExpIds.add(e.id);
+      recovered++;
+    }
+
+    if (recovered > 0) await SyncQueue.updateBadge();
+    return recovered;
+  },
   async rescueWithNewPin(newPin) {
     const cleanPin = String(newPin || '').trim();
     if (!cleanPin) return;
@@ -352,6 +499,7 @@ const SyncQueue = {
       localStorage.setItem('CAPTAIN_STAFF_PIN', cleanPin);
       sessionStorage.setItem('CAPTAIN_STAFF_PIN', cleanPin);
     } catch (_) {}
+    await SyncQueue.recoverPendingFromAppState();
     const all = await PosIDB.getAll('outbox');
     for (const it of all) {
       if (!it || !it.payload) continue;
@@ -2475,9 +2623,11 @@ function voidOrderPrompt(oid) {
 
 // OUTBOX MODAL
 async function openOutboxModal() {
+  await SyncQueue.recoverPendingFromAppState();
   const list = await SyncQueue.getPending();
   setText('obCount', `${list.length} Transaksi`);
-  setText('obDiag', `${APP_VERSION} (${SyncQueue._batchUnsupported ? 'Single' : 'Batch'}) • GAS v${lastServerApiVersion} • ...${String(SCRIPT_URL).slice(-10)}`);
+  const storeTag = PosIDB.db ? 'IDB' : 'LS';
+  setText('obDiag', `${APP_VERSION} (${storeTag}-${SyncQueue._batchUnsupported ? 'Single' : 'Batch'}) • GAS v${lastServerApiVersion} • ...${String(SCRIPT_URL).slice(-10)}`);
   document.getElementById('obList').innerHTML = list.length ? list.map(it => `
     <div class="order-card" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div style="min-width:0;flex:1">
@@ -2497,6 +2647,7 @@ async function forceSyncNow() {
   const btn = document.getElementById('btnForceSync');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyinkronkan...'; }
   try {
+    await SyncQueue.recoverPendingFromAppState();
     await SyncQueue.flush({ force: true });
     lastDataVersion = 0; // paksa refresh penuh pasca flush
     await fetchFromServer(false, false);
@@ -2946,8 +3097,30 @@ window.addEventListener('DOMContentLoaded', async () => {
     ALL_MENU_CATALOG = idbMenu.map(m => Object.assign({}, m, { is_available: m.is_available !== false }));
     MENU_CATALOG = ALL_MENU_CATALOG.filter(m => m.is_available !== false);
   }
-  const idbOrd = await PosIDB.getAll('orders'); if (idbOrd.length) appState.orders = idbOrd;
-  const idbKb = await PosIDB.getAll('piutang_aktif'); if (idbKb.length) appState.piutangAktif = idbKb;
+  const idbOrd = await PosIDB.getAll('orders');
+  if (idbOrd.length) {
+    const mergedOrd = new Map();
+    idbOrd.forEach(o => { if (o && o.orderId) mergedOrd.set(o.orderId, o); });
+    (appState.orders || []).forEach(lo => {
+      if (!lo || !lo.orderId) return;
+      const prev = mergedOrd.get(lo.orderId);
+      if (!prev || lo.syncStatus === 'pending' || (Number(lo.lastModifiedAtMs) || 0) >= (Number(prev.lastModifiedAtMs) || 0)) {
+        mergedOrd.set(lo.orderId, lo);
+      }
+    });
+    appState.orders = Array.from(mergedOrd.values());
+  }
+  const idbKb = await PosIDB.getAll('piutang_aktif');
+  if (idbKb.length) {
+    const mergedKb = new Map();
+    idbKb.forEach(k => { if (k && k.order_id) mergedKb.set(k.order_id, k); });
+    (appState.piutangAktif || []).forEach(lk => {
+      if (lk && lk.order_id && (!mergedKb.has(lk.order_id) || lk.syncStatus === 'pending')) {
+        mergedKb.set(lk.order_id, lk);
+      }
+    });
+    appState.piutangAktif = Array.from(mergedKb.values());
+  }
 
   const mode = new URLSearchParams(location.search).get('mode');
   if (mode === 'kds' || mode === 'barista') switchView('kds');
@@ -2958,6 +3131,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   updateCrewUI();
   renderMemoBar();
   Printer.updatePill();
+  const recoveredCnt = await SyncQueue.recoverPendingFromAppState();
+  if (recoveredCnt > 0) showToast(`🔄 ${recoveredCnt} transaksi lokal dipulihkan ke antrean sinkronisasi`, 'warn');
   await SyncQueue.updateBadge();
   if (navigator.onLine) {
     await SyncQueue.flush();

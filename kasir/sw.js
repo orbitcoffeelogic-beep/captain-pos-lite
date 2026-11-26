@@ -2,7 +2,7 @@
  * CAPTAIN POS LITE — OFFLINE-FIRST SERVICE WORKER (v1.0-lite)
  * Tanpa dependency eksternal (tanpa Tailwind CDN / Google Fonts) -> start instan di tablet lama.
  */
-const CACHE_NAME = 'captain-kasir-lite-v1.1';
+const CACHE_NAME = 'captain-kasir-lite-v1.2';
 const CORE_ASSETS = [
   './',
   './index.html',
